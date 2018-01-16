@@ -30,45 +30,106 @@ Coco/R itself) does not fall under the GNU General Public License.
  compile with:
    Coco Coco.ATG -namespace Coco
 -------------------------------------------------------------------------*/
-$namespace=Coco
 
-#include "Tab.h"
-#include "DFA.h"
-#include "ParserGen.h"
+#include <ostream>
+#include <sstream>
+#include <iostream>
+#include <functional>
+#include "common.h"
 
 COMPILER Coco
 
-	int id;
-	int str;
+std::reference_wrapper<std::wostream> output_stream = std::ref(std::wcout);
 
-	FILE* trace;		// other Coco objects referenced in this ATG
-	Tab *tab;
-	DFA *dfa;
-	ParserGen *pgen;
+std::wostream& output() {
+	return output_stream.get();
+}
 
-	bool genScanner;
-	wchar_t* tokenString;  // used in declarations of literal tokens
-	wchar_t* noString;     // used in declarations of literal tokens
+wchar_t* copy_verbatim(int pos_start, int pos_end) {
+	return scanner->buffer->GetString(pos_start, pos_end);
+}
 
-	// This method will be called by the contructor if it exits.
-	// This support is specific to the C++ version of Coco/R.
-	void Init() {
-		tab = NULL;
-		dfa = NULL;
-		pgen = NULL;
-		id  = 0;
-		str = 1;
-		tokenString = NULL;
-		noString = coco_string_create(L"-none-");
-	}
+// buffer these sections to output them *after* the parser for ANTLR
+std::wstringstream characters, tokens;
 
-	// Uncomment this method if cleanup is necessary,
-	// this method will be called by the destructor if it exists.
-	// This support is specific to the C++ version of Coco/R.
-	// void Destroy() {
-		// nothing to do
-	// }
-/*-------------------------------------------------------------------------*/
+size_t literal_token_index = 0;
+
+bool in_verbatim = true;
+
+
+// maps from coco character set names to their uppercase-variant as used for ANTLR
+UBiMap<std::wstring, std::wstring> charset_names;
+// maps from coco token names to their uppercase-variant as used for ANTLR
+UBiMap<std::wstring, std::wstring> token_names;
+// maps from coco production rule names to their uppercase-variant as used for ANTLR
+UBiMap<std::wstring, std::wstring> production_names;
+
+/**
+ * @return the name to be used in ANTLR instead of coco_name
+ * @param in_section which section the name was defined in, i.e. what type it has.
+ *  NOTE: assumes that once we got into tokens section, no more charsets are defined, similarly for token & production
+ */
+std::wstring define_name(name_type in_section, const std::wstring& coco_name) {
+    switch (in_section) {
+        case name_type::charset:
+            if(charset_names.contains_key(coco_name)) {
+                return charset_names.at(coco_name);
+            } else {
+                const auto antlr_name_raw = toUpperCase(coco_name);
+                auto antlr_name = antlr_name_raw;
+                size_t i = 2;
+                while (charset_names.contains_value(antlr_name)) {
+                    antlr_name = antlr_name_raw + L"_" + std::to_wstring(i);
+                    ++i;
+                }
+                charset_names.insert(coco_name, antlr_name);
+                return antlr_name;
+            }
+        case name_type::token:
+            if(token_names.contains_key(coco_name)) {
+                return token_names.at(coco_name);
+            } else {
+                const auto antlr_name_raw = toUpperCase(coco_name);
+                auto antlr_name = antlr_name_raw;
+                size_t i = 2;
+                while (charset_names.contains_value(antlr_name)
+                       || token_names.contains_value(antlr_name)) {
+                    antlr_name = antlr_name_raw + L"_" + std::to_wstring(i);
+                    ++i;
+                }
+                token_names.insert(coco_name, antlr_name);
+                return antlr_name;
+            }
+        case name_type::production:
+            if(production_names.contains_key(coco_name)) {
+                return production_names.at(coco_name);
+            } else {
+                const auto antlr_name_raw = toLowerCase(coco_name);
+                auto antlr_name = antlr_name_raw;
+                size_t i = 2;
+                while (production_names.contains_value(antlr_name)
+                       || token_names.contains_value(antlr_name)) {
+                    antlr_name = antlr_name_raw + L"_" + std::to_wstring(i);
+                    ++i;
+                }
+                production_names.insert(coco_name, antlr_name);
+                return antlr_name;
+            }
+    }
+}
+
+
+std::wstring toUpperCase(std::wstring str) {
+    std::transform(str.begin(), str.end(), str.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+    return str;
+}
+
+std::wstring toLowerCase(std::wstring str) {
+    std::transform(str.begin(), str.end(), str.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return str;
+}
 
 CHARACTERS
 	letter    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_".
@@ -81,6 +142,9 @@ CHARACTERS
 	printable =  '\u0020' .. '\u007e'.
 	hex       = "0123456789abcdef".
 
+	other = ANY - '/' - '*'.
+	no_lf = ANY - lf.
+
 TOKENS
 	ident     = letter { letter | digit }.
 	number    = digit { digit }.
@@ -89,15 +153,16 @@ TOKENS
 	char      = '\'' ( charCh | '\\' printable { hex } ) '\''.
 
 PRAGMAS
-	ddtSym    = '$' { digit | letter }.  (. tab->SetDDT(la->val); .)
+	ddtSym    = '$' { digit | letter }.
 	optionSym = '$' letter { letter } '='
 	            { digit | letter
 	            | '-' | '.' | ':'
-	            }.                       (. tab->SetOption(la->val); .)
+	            }.
 
-
-COMMENTS FROM "/*" TO "*/" NESTED
-COMMENTS FROM "//" TO lf
+	comment1 = "/*" {'/' | other | '*' {'*'} other} '*' {'*'} '/'. // NESTED not supported!
+		(. if(!in_verbatim) output() << la->val; .)
+	comment2 = "//" { no_lf } lf.
+		(. if(!in_verbatim) output() << la->val; .)
 
 IGNORE cr + lf + tab
 
@@ -105,424 +170,332 @@ IGNORE cr + lf + tab
 
 PRODUCTIONS
 
-Coco                            (. Symbol *sym; Graph *g, *g1, *g2; wchar_t* gramName = NULL; CharSet *s; .)
+Coco
 =
-                                (. int beg = la->pos; int line = la->line; .)
-  { // this section can be used
-    // for #include statements
-    ANY
-  }                             (. if (la->pos != beg) {
-                                     pgen->usingPos = new Position(beg, t->pos + coco_string_length(t->val), 0, line);
-                                   }
+                                (. auto pos_start_includes = la->pos; .)
+  { ANY }                       (. auto pos_end_includes = la->pos;
+                                   in_verbatim = false;
                                 .)
                                 
-  "COMPILER"                    (. genScanner = true; 
-                                   tab->ignored = new CharSet(); .) 
-  ident                         (. gramName = coco_string_create(t->val);
-                                   beg = la->pos;
-                                   line = la->line;
+  "COMPILER" ident              (. output() << "grammar " << t->val << ";\n\n"
+                                            << "@parser::header {\n" << copy_verbatim(pos_start_includes, pos_end_includes) << "\n}\n";
+
+                                   auto pos_start_members = la->pos;
+                                   in_verbatim = true;
                                 .)
-  { ANY }                       (. tab->semDeclPos = new Position(beg, la->pos, 0, line); .)
-  [ "IGNORECASE"                (. dfa->ignoreCase = true; .) ]   /* pdt */
-  [ "CHARACTERS" { SetDecl }]
-  [ "TOKENS"  { TokenDecl<Node::t> }]
-  [ "PRAGMAS" { TokenDecl<Node::pr> }]
-  { "COMMENTS"                  (. bool nested = false; .)
-    "FROM" TokenExpr<g1> 
-    "TO" TokenExpr<g2>
-    [ "NESTED"                  (. nested = true; .)
-    ]                           (. dfa->NewComment(g1->l, g2->l, nested); .)
+  { ANY }                       (. in_verbatim = false;
+                                   output() << "@parser::members {\n"
+                                            << copy_verbatim(pos_start_members, la->pos) << "\n}\n";
+                                .)
+
+  [ "IGNORECASE"                (. output() << "//" C2A_TODO ": IGNORECASE not possible in ANTLR, see doc/case-insensitive-lexing.md\n"; .)
+  ]
+  [ "CHARACTERS"                (. characters << "// CHARACTERS from line " << std::to_wstring(t->line) << '\n'; .)
+    { SetDecl }
+  ]
+
+  [ "TOKENS"                    (. tokens << "// TOKENS from line " << std::to_wstring(t->line) << '\n'; .)
+    { TokenDecl }
+  ]
+  [ "PRAGMAS"                   (. tokens << "// PRAGMAS from line " << std::to_wstring(t->line) << '\n'; .)
+    { TokenDecl }
+  ]
+  { "COMMENTS"                  (. tokens << "// COMMENTS from line " << std::to_wstring(t->line) << '\n';
+                                   tokens << define_name(name_type::token, L"COMMENT_" + std::to_wstring(t->pos)) << ": (";
+                                .)
+    "FROM" TokenExpr            (.  tokens << " .*? "; .)
+    "TO" TokenExpr
+    [ "NESTED"                  (. tokens << "/* " C2A_TODO ": implement NESTED for this COMMENT */\n"; .)
+    ]                           (. tokens << ") -> channel(HIDDEN);\n"; .)
   }
-  { "IGNORE" Set<s>         (. tab->ignored->Or(s); .)
+  { "IGNORE"                    (. tokens << "// IGNORE from line " << std::to_wstring(t->line) << '\n';
+                                   tokens << define_name(name_type::token, L"IGNORE") << ": (";
+                                .)
+    Set<tokens>                  (. tokens  << ") -> skip;\n"; .)
   }
 
   SYNC 
-  "PRODUCTIONS"                 (. if (genScanner) dfa->MakeDeterministic();
-                                   tab->DeleteNodes();
-                                 .)
-  { ident                       (. sym = tab->FindSym(t->val);
-                                   bool undef = (sym == NULL);
-                                   if (undef) sym = tab->NewSym(Node::nt, t->val, t->line);
-                                   else {
-                                     if (sym->typ == Node::nt) {
-                                       if (sym->graph != NULL) SemErr(L"name declared twice");
-                                   	 } else SemErr(L"this symbol kind not allowed on left side of production");
-                                   	 sym->line = t->line;
-                                   }
-                                   bool noAttrs = (sym->attrPos == NULL);
-                                   sym->attrPos = NULL;
-                                 .)
-    [ AttrDecl<sym> ]           (. if (!undef)
-                                     if (noAttrs != (sym->attrPos == NULL))
-                                       SemErr(L"attribute mismatch between declaration and use of this symbol");
-                                 .)
-    [ SemText<.sym->semPos.> ] WEAK
-    '='
-    Expression<g>               (. sym->graph = g->l;
-                                   tab->Finish(g);
-                                 .)
-                                WEAK
-    '.'
-  }
-  "END" ident                   (. if (!coco_string_equal(gramName, t->val))
-                                     SemErr(L"name does not match grammar name");
-                                   tab->gramSy = tab->FindSym(gramName);
-                                   if (tab->gramSy == NULL)
-                                     SemErr(L"missing production for grammar name");
-                                   else {
-                                     sym = tab->gramSy;
-                                     if (sym->attrPos != NULL)
-                                       SemErr(L"grammar symbol must not have attributes");
-                                   }
-                                   tab->noSym = tab->NewSym(Node::t, L"???", 0); // noSym gets highest number
-                                   tab->SetupAnys();
-                                   tab->RenumberPragmas();
-                                   if (tab->ddt[2]) tab->PrintNodes();
-                                   if (errors->count == 0) {
-                                     wprintf(L"checking\n");
-                                     tab->CompSymbolSets();
-                                     if (tab->ddt[7]) tab->XRef();
-                                     if (tab->GrammarOk()) {
-                                       wprintf(L"parser");
-                                       pgen->WriteParser();
-                                       if (genScanner) {
-                                         wprintf(L" + scanner");
-                                         dfa->WriteScanner();
-                                         if (tab->ddt[0]) dfa->PrintStates();
-                                       }
-                                       wprintf(L" generated\n");
-                                       if (tab->ddt[8]) pgen->WriteStatistics();
-                                     }
-                                   }
-                                   if (tab->ddt[6]) tab->PrintSymbolTable();
-                                 .)
+  "PRODUCTIONS"                 (. output() << "// PRODUCTIONS from line " << std::to_wstring(t->line) << '\n'; .)
+  { Production }
+  "END" ident                   (. output() << "\n\n" << tokens.str() << "\n\n" << characters.str(); .)
   '.'
+.
+
+
+Production
+=
+	ident                       (. output() << define_name(name_type::production, std::wstring(t->val)); .)
+	[ AttrDecl ]
+                                (. output() << ":\n\t"; .)
+    [ SemText<output()> ]
+    WEAK '='
+    Expression
+    WEAK '.'                    (. output() << ";\n\n"; .)
+.
+
+
+/*------------------------------------------------------------------------------------*/
+
+SetDecl
+=
+  ident                         (. characters << "fragment " << define_name(name_type::charset, t->val)
+                                              << ":\n\t";
+                                .)
+  '=' Set<characters>
+  '.'                           (. characters << "\n\t;\n\n"; .)
 .
 
 /*------------------------------------------------------------------------------------*/
 
-SetDecl                         (. CharSet *s; .)
+Set<std::wostream& output_to>
 =
-  ident                         (. wchar_t *name = coco_string_create(t->val);
-                                   CharClass *c = tab->FindCharClass(name);
-                                   if (c != NULL) SemErr(L"name declared twice");
-                                 .)
-  '=' Set<s>                    (. if (s->Elements() == 0) SemErr(L"character set must not be empty");
-                                   tab->NewCharClass(name, s);
-                                 .)
-  '.'
-.
-
-/*------------------------------------------------------------------------------------*/
-
-Set<CharSet* &s>               (. CharSet *s2; .)
-=
-  SimSet<s>
-  { '+' SimSet<s2>              (. s->Or(s2); .)
-  | '-' SimSet<s2>              (. s->Subtract(s2); .)
+  SimSet<output_to>
+  { '+'                         (. output_to << "\n\t| "; .)
+    SimSet<output_to>
+  | '-'                         (. output_to << " /*" C2A_TODO ": this subset was negated, reformulate for ANTLR! */( "; .)
+    SimSet<output_to>          (. output_to << ") "; .)
   }
 .
 
 /*------------------------------------------------------------------------------------*/
 
-SimSet<CharSet* &s>             (. int n1, n2; .)
-=                               (. s = new CharSet(); .)
-( ident                         (. CharClass *c = tab->FindCharClass(t->val);
-                                   if (c == NULL) SemErr(L"undefined name"); else s->Or(c->set);
+SimSet<std::wostream& output_to>
+=
+( ident                         (. if(charset_names.contains_key(t->val))
+                                       output_to << charset_names.at(t->val);
                                 .)
-| string                        (.
-								   wchar_t *subName2 = coco_string_create(t->val, 1, coco_string_length(t->val)-2);
-								   wchar_t *name = tab->Unescape(subName2);
-								   coco_string_delete(subName2);
-                                   wchar_t ch;
-                                   int len = coco_string_length(name);
-                                   for(int i=0; i < len; i++) {
-                                     ch = name[i];
-                                     if (dfa->ignoreCase) {
-                                       if ((L'A' <= ch) && (ch <= L'Z')) ch = ch - (L'A' - L'a'); // ch.ToLower()
-                                     }
-                                     s->Set(ch);
-                                   }
-								   coco_string_delete(name);
+|                               (. std::wstring chars; .)
+  String<chars, output_to>      (. // remove "-" if in chars, because in ANTLR it denotes character range
+                                   auto removed = std::remove(chars.begin(), chars.end(), '-');
+                                   if(removed != chars.end())
+                                       output_to << "'-' | ";
+                                   chars.erase(removed, chars.end());
+
+                                   output_to << "[" << chars << "]";
                                 .)
-| Char<n1>                      (. s->Set(n1); .)
-  [ ".." Char<n2>               (. for (int i = n1; i <= n2; i++) s->Set(i); .)
+|                               (. std::wstring name; .)
+  Char<name, output_to>         (. output_to << name; .)
+  [ ".." Char<name, output_to>  (. output_to << ".." << name; .)
   ]
-| "ANY"                         (. s = new CharSet(); s->Fill(); .)
+| "ANY"                         (. output_to << " . "; .)
 )
 .
 
-/*--------------------------------------------------------------------------------------*/
-
-Char<int &n>
+Char<std::wstring& name, std::wostream& output_to>
 =
-  char                          (. n = 0;
-								   wchar_t* subName = coco_string_create(t->val, 1, coco_string_length(t->val)-2);
-								   wchar_t* name = tab->Unescape(subName);
-								   coco_string_delete(subName);
-								   
-								   // "<= 1" instead of "== 1" to allow the escape sequence '\0' in c++
-								   if (coco_string_length(name) <= 1) n = name[0];
-								   else SemErr(L"unacceptable character value");
-								   coco_string_delete(name);
-								   if (dfa->ignoreCase && (((wchar_t) n) >= 'A') && (((wchar_t) n) <= 'Z')) n += 32;
-                                 .)
+	char                        (. name = std::wstring(t->val);
+
+                                   if(name.find(L"\\") != std::wstring::npos)
+                                       output_to << "/*" C2A_TODO ": escaped character, check if meaning correct: */ ";
+                                .)
+.
+
+String<std::wstring& name, std::wostream& output_to>
+=   string                      (. name = std::wstring(t->val);
+                                   name = name.substr(1, name.length() -2); // remove ""
+                                   if(name.find(L"\\") != std::wstring::npos)
+                                       output_to << "/*" C2A_TODO ": escaped characters in string, check if meaning correct */ ";
+                                .)
 .
 
 /*------------------------------------------------------------------------------------*/
 
-TokenDecl<int typ>              (. wchar_t* name = NULL; int kind; Symbol *sym; Graph *g; .)
+TokenDecl                       (. std::wstring name; bool is_literal; .)
 =
-  Sym<name, kind>               (. sym = tab->FindSym(name);
-                                   if (sym != NULL) SemErr(L"name declared twice");
-                                   else {
-                                     sym = tab->NewSym(typ, name, t->line);
-                                     sym->tokenKind = Symbol::fixedToken;
+  Sym<name, is_literal, tokens>
+                                (. if(is_literal) {
+                                       // raw string or char token, coco has no name for it
+                                       tokens << "LITERAL_" << std::to_wstring(literal_token_index)
+                                              << ": " << name;
+                                       ++literal_token_index;
+                                   } else {
+                                       tokens << define_name(name_type::token, name) << ": ";
                                    }
-                                   tokenString = NULL;
-                                 .)
+                                .)
   SYNC
-  ( '=' TokenExpr<g> '.'        (. if (kind == str) SemErr(L"a literal must not be declared with a structure");
-                                   tab->Finish(g);
-                                   if (tokenString == NULL || coco_string_equal(tokenString, noString))
-                                     dfa->ConvertToStates(g->l, sym);
-                                   else { // TokenExpr is a single string
-                                     if ((*(tab->literals))[tokenString] != NULL)
-                                       SemErr(L"token string declared twice");
-                                     tab->literals->Set(tokenString, sym);
-                                     dfa->MatchLiteral(tokenString, sym);
-                                   }
-                                 .)
-  |                             (. if (kind == id) genScanner = false;
-                                   else dfa->MatchLiteral(sym->name, sym);
-                                 .)
+  ( '=' TokenExpr '.'           (. tokens << "\n\t"; .)
+  |                             (. tokens << " //" C2A_TODO ": named token without body from Coco\n"; .)
   )
-  [ SemText<.sym->semPos.>      (. if (typ != Node::pr) SemErr(L"semantic action not allowed here"); .)
+  [
+    SemText<tokens>
   ]
+                                (. tokens << ";\n\n"; .)
 .
 
 /*------------------------------------------------------------------------------------*/
 
-AttrDecl<Symbol *sym>
+AttrDecl //TODO: parameter conflicts with rule with same name
 =
-  '<'                           (. int beg = la->pos; int col = la->col; int line = la->line; .)
-  { ANY
-  | badString                   (. SemErr(L"bad string in attributes"); .)
-  }
-  '>'                           (. if (t->pos > beg)
-                                     sym->attrPos = new Position(beg, t->pos, col, line); .)
-| "<."                          (. int beg = la->pos; int col = la->col; int line = la->line; .)
-  { ANY
-  | badString                   (. SemErr(L"bad string in attributes"); .)
-  }
-  ".>"                          (. if (t->pos > beg)
-                                     sym->attrPos = new Position(beg, t->pos, col, line); .)
+  '<'                           (. auto pos_start = la->pos;
+                                   output() << "[";
+                                   in_verbatim = true;
+                                .)
+  { ANY | badString }
+  '>'                           (. output() << copy_verbatim(pos_start, t->pos) << "]";
+                                   in_verbatim = false;
+                                .)
+| "<."                          (. auto pos_start = la->pos;
+                                   output() << "[";
+                                   in_verbatim = true;
+                                .)
+  { ANY | badString }
+  ".>"                          (. output() << copy_verbatim(pos_start, t->pos) << "]";
+                                   in_verbatim = false;
+                                .)
 .
 
 /*------------------------------------------------------------------------------------*/
 
-Expression<Graph* &g>           (. Graph *g2; .)
+Expression
 = 
-  Term<g>                       (. bool first = true; .)
-  {                             WEAK
-    '|'
-    Term<g2>                    (. if (first) { tab->MakeFirstAlt(g); first = false; }
-                                   tab->MakeAlternative(g, g2);
-                                 .)
+  Term
+  { WEAK '|'                    (. output() << "\n\t| "; .)
+    Term
   }
 .
 
-/*------------------------------------------------------------------------------------*/
-
-Term<Graph* &g>               (. Graph *g2; Node *rslv = NULL; g = NULL; .)
+Term
 =
-( [                           (. rslv = tab->NewNode(Node::rslv, (Symbol*)NULL, la->line); .)
-    Resolver<.rslv->pos.>       (. g = new Graph(rslv); .)
-  ]
-  Factor<g2>                  (. if (rslv != NULL) tab->MakeSequence(g, g2);
-                                 else g = g2; .)
-  { Factor<g2>                (. tab->MakeSequence(g, g2); .)
-  }
-|                             (. g = new Graph(tab->NewNode(Node::eps, (Symbol*)NULL, 0)); .)
-)                             (. if (g == NULL) // invalid start of Term
-                                 g = new Graph(tab->NewNode(Node::eps, (Symbol*)NULL, 0)); .)
+(   [ Resolver ]
+	Factor
+	{                           (. output() << "\n\t\t"; .)
+		Factor
+	}
+|
+)
 .
 
-/*------------------------------------------------------------------------------------*/
-
-Factor<Graph* &g>             (. wchar_t* name = NULL; int kind; Position *pos; bool weak = false; 
-                                   g = NULL;
-                                 .)
+Factor
 =
-( [ "WEAK"                      (. weak = true; .)
-  ]
-  Sym<name, kind>             (. Symbol *sym = tab->FindSym(name);
-                                   if (sym == NULL && kind == str)
-                                     sym = (Symbol*)((*(tab->literals))[name]);
-                                   bool undef = (sym == NULL);
-                                   if (undef) {
-                                     if (kind == id)
-                                       sym = tab->NewSym(Node::nt, name, 0);  // forward nt
-                                     else if (genScanner) { 
-                                       sym = tab->NewSym(Node::t, name, t->line);
-                                       dfa->MatchLiteral(sym->name, sym);
-                                     } else {  // undefined string in production
-                                       SemErr(L"undefined string in production");
-                                       sym = tab->eofSy;  // dummy
-                                     }
+( [ "WEAK" ]                    (. std::wstring name; bool is_literal; .)
+  Sym<name, is_literal, output()>
+                                (. if(is_literal) {
+                                       output() << name;
+                                   } else {
+                                       if(token_names.contains_key(name)) {
+                                           output() << token_names.at(name);
+                                       } else {
+                                           if(! production_names.contains_key(name)) {
+                                               SemErr(std::wstring(L"name not defined yet: " + name).c_str()); // actually a warning only
+                                           }
+                                           output() << define_name(name_type::production, name);
+                                       }
                                    }
-                                   int typ = sym->typ;
-                                   if (typ != Node::t && typ != Node::nt)
-                                     SemErr(L"this symbol kind is not allowed in a production");
-                                   if (weak) {
-                                     if (typ == Node::t) typ = Node::wt;
-                                     else SemErr(L"only terminals may be weak");
-                                   }
-                                   Node *p = tab->NewNode(typ, sym, t->line);
-                                   g = new Graph(p);
                                  .)
-  [ Attribs<p>                  (. if (kind != id) SemErr(L"a literal must not have attributes"); .)
-  ]                             (. if (undef)
-                                     sym->attrPos = p->pos;  // dummy
-                                   else if ((p->pos == NULL) != (sym->attrPos == NULL))
-                                     SemErr(L"attribute mismatch between declaration and use of this symbol");
-                                 .)
-| '(' Expression<g> ')'
-| '[' Expression<g> ']'     (. tab->MakeOption(g); .)
-| '{' Expression<g> '}'     (. tab->MakeIteration(g); .)
-| SemText<pos>              (. Node *p = tab->NewNode(Node::sem, (Symbol*)NULL, 0);
-                                   p->pos = pos;
-                                   g = new Graph(p);
-                                 .)
-| "ANY"                         (. Node *p = tab->NewNode(Node::any, (Symbol*)NULL, 0);  // p.set is set in tab->SetupAnys
-                                   g = new Graph(p);
-                                 .)
-| "SYNC"                        (. Node *p = tab->NewNode(Node::sync, (Symbol*)NULL, 0);
-                                   g = new Graph(p);
-                                 .)
-)                               (. if (g == NULL) // invalid start of Factor
-                                     g = new Graph(tab->NewNode(Node::eps, (Symbol*)NULL, 0));
-                                 .)
+  [ Attribs ]
+| '('                           (. output() << "( "; .)
+   Expression ')'               (. output() << " )"; .)
+| '['                           (. output() << "( "; .)
+   Expression ']'               (. output() << " )?"; .)
+| '{'                           (. output() << "( "; .)
+   Expression '}'               (. output() << " )*"; .)
+| SemText<output()>
+| "ANY"                         (. output() << " . "; .)
+| "SYNC"
+)
 .
 
 /*------------------------------------------------------------------------------------*/
 
-Resolver<Position* &pos>   
+Resolver
 =
-  "IF" "("                       (. int beg = la->pos; int col = la->col; int line = la->line; .)
-  Condition                      (. pos = new Position(beg, t->pos, col, line); .)
+  "IF" "("                       (. auto pos_start = la->pos;
+                                    output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
+                                    in_verbatim = true;
+                                 .)
+  Condition                      (. output() << copy_verbatim(pos_start, la->pos) << "\n*/\n";
+                                    in_verbatim = false;
+                                 .)
 .
-
-/*------------------------------------------------------------------------------------*/
 
 Condition = { "(" Condition | ANY } ")" .
 
 /*------------------------------------------------------------------------------------*/
 
-TokenExpr<Graph* &g>            (. Graph *g2; .)
+TokenExpr
 =
-  TokenTerm<g>                  (. bool first = true; .)
-  {                             WEAK
-    '|'
-    TokenTerm<g2>               (. if (first) { tab->MakeFirstAlt(g); first = false; }
-                                   tab->MakeAlternative(g, g2);
-                                 .)
+  TokenTerm
+  {
+    WEAK '|'                    (. tokens << "\n\t| "; .)
+    TokenTerm
   }
 .
 
-/*------------------------------------------------------------------------------------*/
-
-TokenTerm<Graph* &g>        (. Graph *g2; .)
+TokenTerm
 =
-  TokenFactor<g>
-  { TokenFactor<g2>         (. tab->MakeSequence(g, g2); .)
-  }
-  [ "CONTEXT"
-    '(' TokenExpr<g2>       (. tab->SetContextTrans(g2->l); dfa->hasCtxMoves = true;
-                                   tab->MakeSequence(g, g2); .)
+  TokenFactor
+  { TokenFactor }
+  [ "CONTEXT"               (. tokens << "/*" C2A_TODO ": CONTEXT specification not supported in ANTLR\n"; .)
+    '(' TokenExpr           (. tokens << "*/\n"; .)
     ')'
   ]
 .
 
-/*------------------------------------------------------------------------------------*/
-
-TokenFactor<Graph* &g>        (. wchar_t* name = NULL; int kind; .)
+TokenFactor                     (. std::wstring name; bool is_literal; .)
 =
-                              (. g = NULL; .)
-( Sym<name, kind>             (. if (kind == id) {
-                                     CharClass *c = tab->FindCharClass(name);
-                                     if (c == NULL) {
-                                       SemErr(L"undefined name");
-                                       c = tab->NewCharClass(name, new CharSet());
-                                     }
-                                     Node *p = tab->NewNode(Node::clas, (Symbol*)NULL, 0); p->val = c->n;
-                                     g = new Graph(p);
-                                     tokenString = coco_string_create(noString);
-                                   } else { // str
-                                     g = tab->StrToGraph(name);
-                                     if (tokenString == NULL) tokenString = coco_string_create(name);
-                                     else tokenString = coco_string_create(noString);
+( Sym<name, is_literal, tokens>
+                                (. if(is_literal) {
+                                       tokens << name;
+                                   } else {
+                                       if (! charset_names.contains_key(name))
+                                           SemErr(L"Character Class used but not defined");
+                                       tokens << charset_names.at(name);
                                    }
-                                 .)
-| '(' TokenExpr<g> ')'
-| '[' TokenExpr<g> ']'      (. tab->MakeOption(g); tokenString = coco_string_create(noString); .)
-| '{' TokenExpr<g> '}'      (. tab->MakeIteration(g); tokenString = coco_string_create(noString); .)
-)                               (. if (g == NULL) // invalid start of TokenFactor
-                                     g = new Graph(tab->NewNode(Node::eps, (Symbol*)NULL, 0)); .)
-.
-
-/*------------------------------------------------------------------------------------*/
-
-Sym<wchar_t* &name, int &kind>
-=                               (. name = coco_string_create(L"???"); kind = id; .)
-( ident                         (. kind = id; coco_string_delete(name); name = coco_string_create(t->val); .)
-| (string                       (. coco_string_delete(name); name = coco_string_create(t->val); .)
-  | char                        (.
-								   wchar_t *subName = coco_string_create(t->val, 1, coco_string_length(t->val)-2);
-								   coco_string_delete(name); 
-								   name = coco_string_create_append(L"\"", subName);
-								   coco_string_delete(subName);
-								   coco_string_merge(name, L"\""); 
-							    .)
-  )                             (. kind = str;
-                                   if (dfa->ignoreCase) {
-								     wchar_t *oldName = name;
-									 name = coco_string_create_lower(name);
-									 coco_string_delete(oldName);
-								   }
-                                   if (coco_string_indexof(name, ' ') >= 0)
-                                     SemErr(L"literal tokens must not contain blanks"); .)
+                                .)
+| '('                           (. tokens << "( "; .)
+	TokenExpr ')'               (. tokens << " )"; .)
+| '['                           (. tokens << "( "; .)
+	TokenExpr ']'               (. tokens << " )?"; .)
+| '{'                           (. tokens << "( "; .)
+	TokenExpr '}'               (. tokens << " )*"; .)
 )
 .
 
 /*------------------------------------------------------------------------------------*/
 
-Attribs<Node *p>
+Sym<std::wstring& name, bool& is_literal, std::wostream& output_to>
 =
-  '<'                           (. int beg = la->pos; int col = la->col; int line = la->line; .)
-  { ANY 
-  | badString                   (. SemErr(L"bad string in attributes"); .)
-  }
-  '>'                           (. if (t->pos > beg) p->pos = new Position(beg, t->pos, col, line); .)
-| "<."                          (. int beg = la->pos; int col = la->col; int line = la->line; .)
-  { ANY 
-  | badString                   (. SemErr(L"bad string in attributes"); .)
-  }
-  ".>"                          (. if (t->pos > beg) p->pos = new Position(beg, t->pos, col, line); .)
+( ident                         (. name = std::wstring(t->val);
+                                   is_literal = false;
+                                .)
+| String<name, output_to>       (. name = L"'" + name + L"'";
+                                   is_literal = true;
+                                .)
+| Char<name, output_to>         (. is_literal = true; .)
+)
 .
 
 /*------------------------------------------------------------------------------------*/
 
-SemText<Position* &pos>
+Attribs
 =
-  "(."                          (. int beg = la->pos; int col = la->col; int line = t->line; .)
-  { ANY
-  | badString                   (. SemErr(L"bad string in semantic action"); .)
-  | "(."                        (. SemErr(L"missing end of previous semantic action"); .)
-  }
-  ".)"                          (. pos = new Position(beg, t->pos, col, line); .)
+  '<'                           (. auto pos_start = la->pos;
+                                   output() << "[";
+                                   in_verbatim = true;
+                                .)
+  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << "]";
+                                   in_verbatim = false;
+                                .)
+  '>'
+| "<."                          (. auto pos_start = la->pos;
+                                   output() << "[";
+                                   in_verbatim = true;
+                                .)
+  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << "]";
+                                   in_verbatim = false;
+                                .)
+  ".>"
 .
 
-/*------------------------------------------------------------------------------------*/
-  
+SemText<std::wostream& output_to>
+=
+  "(."                          (. auto pos_start = la->pos;
+	                               in_verbatim = true;
+                                .)
+  { ANY | badString | "(." }    (. output_to << "{ " << copy_verbatim(pos_start, la->pos) << " }\n";
+	                               in_verbatim = false;
+                                .)
+  ".)"
+.
+
 END Coco.

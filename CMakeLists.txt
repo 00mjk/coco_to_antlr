@@ -19,12 +19,12 @@ set(generated_source_files
         ${CMAKE_CURRENT_BINARY_DIR}/Parser.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/Parser.h
 )
+set_source_files_properties(${generated_source_files} PROPERTIES GENERATED TRUE)
 set(SOURCE_FILES
         main.cpp
         common.h
         ${generated_source_files}
 )
-set_source_files_properties(${generated_source_files} PROPERTIES GENERATED TRUE)
 
 # generate using Coco
 add_custom_command(
