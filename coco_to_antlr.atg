@@ -34,6 +34,7 @@ Coco/R itself) does not fall under the GNU General Public License.
 #include <ostream>
 #include <sstream>
 #include <iostream>
+#include <cassert>
 #include <functional>
 #include "common.h"
 
@@ -131,6 +132,19 @@ std::wstring toLowerCase(std::wstring str) {
     return str;
 }
 
+
+int indent_level = 0;
+
+/** adjust current indent_level by @param increment (positive or negative).
+  * @return whitespaces for current/new indentation level
+  */
+std::wstring indent(int increment = 0) {
+	indent_level += increment;
+	assert(indent_level >= 0);
+	indent_level = std::max(0, indent_level);
+	return std::wstring(indent_level, '\t');
+}
+
 CHARACTERS
 	letter    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_".
 	digit     = "0123456789".
@@ -178,59 +192,78 @@ Coco
                                 .)
                                 
   "COMPILER" ident              (. output() << "grammar " << t->val << ";\n\n"
-                                            << "@parser::header {\n" << copy_verbatim(pos_start_includes, pos_end_includes) << "\n}\n";
+                                            << "@parser::header {\n"
+                                            << copy_verbatim(pos_start_includes, pos_end_includes)
+                                            << "\n}\n\n";
 
                                    auto pos_start_members = la->pos;
                                    in_verbatim = true;
                                 .)
   { ANY }                       (. in_verbatim = false;
                                    output() << "@parser::members {\n"
-                                            << copy_verbatim(pos_start_members, la->pos) << "\n}\n";
+                                            << copy_verbatim(pos_start_members, la->pos)
+                                            << "\n}\n\n";
                                 .)
 
-  [ "IGNORECASE"                (. output() << "//" C2A_TODO ": IGNORECASE not possible in ANTLR, see doc/case-insensitive-lexing.md\n"; .)
+  [ "IGNORECASE"                (. output() << "//" C2A_TODO ": IGNORECASE not possible in ANTLR\n"; .)
   ]
   [ "CHARACTERS"                (. characters << "// CHARACTERS from line " << std::to_wstring(t->line) << '\n'; .)
     { SetDecl }
   ]
 
   [ "TOKENS"                    (. tokens << "// TOKENS from line " << std::to_wstring(t->line) << '\n'; .)
-    { TokenDecl }
+    { TokenDecl }               (. tokens << '\n'; .)
   ]
   [ "PRAGMAS"                   (. tokens << "// PRAGMAS from line " << std::to_wstring(t->line) << '\n'; .)
-    { TokenDecl }
+    { TokenDecl }               (. tokens << '\n'; .)
   ]
   { "COMMENTS"                  (. tokens << "// COMMENTS from line " << std::to_wstring(t->line) << '\n';
-                                   tokens << define_name(name_type::token, L"COMMENT_" + std::to_wstring(t->pos)) << ": (";
+                                   tokens << define_name(name_type::token, L"COMMENT_" + std::to_wstring(t->pos))
+                                          << ": (\n";
+                                   indent(+1);
                                 .)
-    "FROM" TokenExpr            (.  tokens << " .*? "; .)
+    "FROM" TokenExpr            (.  tokens << " .*?\n"; .)
     "TO" TokenExpr
-    [ "NESTED"                  (. tokens << "/* " C2A_TODO ": implement NESTED for this COMMENT */\n"; .)
-    ]                           (. tokens << ") -> channel(HIDDEN);\n"; .)
-  }
-  { "IGNORE"                    (. tokens << "// IGNORE from line " << std::to_wstring(t->line) << '\n';
-                                   tokens << define_name(name_type::token, L"IGNORE") << ": (";
+    [ "NESTED"                  (. tokens << '\n' << indent()
+                                          << "// " C2A_TODO ": implement NESTED for this COMMENT\n";
                                 .)
-    Set<tokens>                  (. tokens  << ") -> skip;\n"; .)
+    ]                           (. tokens << indent(-1) << ") -> channel(HIDDEN);\n\n"; .)
+  }                             (. tokens << '\n'; .)
+  { "IGNORE"                    (. tokens << "// IGNORE from line " << std::to_wstring(t->line) << '\n';
+                                   tokens << define_name(name_type::token, L"IGNORE") << ": (\n"
+                                          << indent(+1);
+                                .)
+    Set<tokens>                  (. tokens  << ") -> skip;\n";
+                                    indent(-1);
+                                 .)
   }
 
-  SYNC 
+  SYNC                          (. output() << "\n\n"; .)
   "PRODUCTIONS"                 (. output() << "// PRODUCTIONS from line " << std::to_wstring(t->line) << '\n'; .)
   { Production }
-  "END" ident                   (. output() << "\n\n" << tokens.str() << "\n\n" << characters.str(); .)
+  "END" ident                   (. output() << "\n\n" << tokens.str()
+                                            << "\n\n" << characters.str();
+                                .)
   '.'
+  EOF
 .
 
 
 Production
 =
-	ident                       (. output() << define_name(name_type::production, std::wstring(t->val)); .)
-	[ AttrDecl ]
-                                (. output() << ":\n\t"; .)
-    [ SemText<output()> ]
+    ident                       (. output() << define_name(name_type::production, std::wstring(t->val)); .)
+    [ AttrDecl ]
+                                (. output() << ":\n";
+                                   indent(+1);
+                                .)
+    [                           (. output() << indent(); .)
+      SemText<output()>         (. output() << '\n'; .)
+    ]
     WEAK '='
-    Expression
-    WEAK '.'                    (. output() << ";\n\n"; .)
+    Expression                  (. output() << '\n' << indent() << ";\n";
+                                   indent(-1);
+                                .)
+    WEAK '.'                    (. output() << '\n'; .)
 .
 
 
@@ -239,10 +272,12 @@ Production
 SetDecl
 =
   ident                         (. characters << "fragment " << define_name(name_type::charset, t->val)
-                                              << ":\n\t";
+                                              << ":\n" << indent(+1);
                                 .)
   '=' Set<characters>
-  '.'                           (. characters << "\n\t;\n\n"; .)
+  '.'                           (. characters << '\n' << indent() << ";\n\n";
+                                   indent(-1);
+                                .)
 .
 
 /*------------------------------------------------------------------------------------*/
@@ -250,10 +285,12 @@ SetDecl
 Set<std::wostream& output_to>
 =
   SimSet<output_to>
-  { '+'                         (. output_to << "\n\t| "; .)
+  { '+'                         (. output_to << '\n' << indent() << "| "; .)
     SimSet<output_to>
-  | '-'                         (. output_to << " /*" C2A_TODO ": this subset was negated, reformulate for ANTLR! */( "; .)
-    SimSet<output_to>          (. output_to << ") "; .)
+  | '-'                         (. output_to << '\n' << indent()
+                                             << "//" C2A_TODO ": the following subset was negated, reformulate for ANTLR"
+                                             << '\n' << indent() << "~("; .)
+    SimSet<output_to>          (. output_to << ")\n"; .)
   }
 .
 
@@ -271,13 +308,13 @@ SimSet<std::wostream& output_to>
                                        output_to << "'-' | ";
                                    chars.erase(removed, chars.end());
 
-                                   output_to << "[" << chars << "]";
+                                   output_to << '[' << chars << ']';
                                 .)
 |                               (. std::wstring name; .)
   Char<name, output_to>         (. output_to << name; .)
   [ ".." Char<name, output_to>  (. output_to << ".." << name; .)
   ]
-| "ANY"                         (. output_to << " . "; .)
+| "ANY"                         (. output_to << '.'; .)
 )
 .
 
@@ -286,7 +323,7 @@ Char<std::wstring& name, std::wostream& output_to>
 	char                        (. name = std::wstring(t->val);
 
                                    if(name.find(L"\\") != std::wstring::npos)
-                                       output_to << "/*" C2A_TODO ": escaped character, check if meaning correct: */ ";
+                                       output_to << "/*" C2A_TODO ": escaped character, check meaning: */";
                                 .)
 .
 
@@ -294,7 +331,7 @@ String<std::wstring& name, std::wostream& output_to>
 =   string                      (. name = std::wstring(t->val);
                                    name = name.substr(1, name.length() -2); // remove ""
                                    if(name.find(L"\\") != std::wstring::npos)
-                                       output_to << "/*" C2A_TODO ": escaped characters in string, check if meaning correct */ ";
+                                       output_to << "/*" C2A_TODO ": escaped characters in string, check meaning: */ ";
                                 .)
 .
 
@@ -306,20 +343,24 @@ TokenDecl                       (. std::wstring name; bool is_literal; .)
                                 (. if(is_literal) {
                                        // raw string or char token, coco has no name for it
                                        tokens << "LITERAL_" << std::to_wstring(literal_token_index)
-                                              << ": " << name;
+                                              << ':' << name;
                                        ++literal_token_index;
                                    } else {
-                                       tokens << define_name(name_type::token, name) << ": ";
+                                       tokens << define_name(name_type::token, name) << ':';
                                    }
                                 .)
-  SYNC
-  ( '=' TokenExpr '.'           (. tokens << "\n\t"; .)
+  SYNC                          (. tokens << '\n';
+                                   indent(+1);
+                                .)
+  ( '=' TokenExpr '.'
   |                             (. tokens << " //" C2A_TODO ": named token without body from Coco\n"; .)
   )
-  [
+  [                             (. tokens << '\n' << indent(); .)
     SemText<tokens>
   ]
-                                (. tokens << ";\n\n"; .)
+                                (. tokens << '\n' << indent() << ";\n\n";
+                                   indent(-1);
+                                .)
 .
 
 /*------------------------------------------------------------------------------------*/
@@ -327,19 +368,19 @@ TokenDecl                       (. std::wstring name; bool is_literal; .)
 AttrDecl //TODO: parameter conflicts with rule with same name
 =
   '<'                           (. auto pos_start = la->pos;
-                                   output() << "[";
+                                   output() << '[';
                                    in_verbatim = true;
                                 .)
   { ANY | badString }
-  '>'                           (. output() << copy_verbatim(pos_start, t->pos) << "]";
+  '>'                           (. output() << copy_verbatim(pos_start, t->pos) << ']';
                                    in_verbatim = false;
                                 .)
 | "<."                          (. auto pos_start = la->pos;
-                                   output() << "[";
+                                   output() << '[';
                                    in_verbatim = true;
                                 .)
   { ANY | badString }
-  ".>"                          (. output() << copy_verbatim(pos_start, t->pos) << "]";
+  ".>"                          (. output() << copy_verbatim(pos_start, t->pos) << ']';
                                    in_verbatim = false;
                                 .)
 .
@@ -347,9 +388,11 @@ AttrDecl //TODO: parameter conflicts with rule with same name
 /*------------------------------------------------------------------------------------*/
 
 Expression
-= 
+=                               (. output() << indent(); .)
   Term
-  { WEAK '|'                    (. output() << "\n\t| "; .)
+  { WEAK '|'                    (. output() << '\n' << indent(-1) << "|\t";
+                                   indent(+1);
+                                .)
     Term
   }
 .
@@ -358,7 +401,7 @@ Term
 =
 (   [ Resolver ]
 	Factor
-	{                           (. output() << "\n\t\t"; .)
+	{                           (. output() << '\n' << indent(); .)
 		Factor
 	}
 |
@@ -367,7 +410,7 @@ Term
 
 Factor
 =
-( [ "WEAK" ]                    (. std::wstring name; bool is_literal; .)
+  [ "WEAK" ]                    (. std::wstring name; bool is_literal; .)
   Sym<name, is_literal, output()>
                                 (. if(is_literal) {
                                        output() << name;
@@ -383,16 +426,15 @@ Factor
                                    }
                                  .)
   [ Attribs ]
-| '('                           (. output() << "( "; .)
-   Expression ')'               (. output() << " )"; .)
-| '['                           (. output() << "( "; .)
-   Expression ']'               (. output() << " )?"; .)
-| '{'                           (. output() << "( "; .)
-   Expression '}'               (. output() << " )*"; .)
+| '('                           (. output() << "(\n"; indent(+1); .)
+   Expression ')'               (. output() << '\n' << indent(-1) << ')'; .)
+| '['                           (. output() << "(\n"; indent(+1); .)
+   Expression ']'               (. output() << '\n' << indent(-1) << ")?"; .)
+| '{'                           (. output() << "(\n"; indent(+1); .)
+   Expression '}'               (. output() << '\n' << indent(-1) << ")*"; .)
 | SemText<output()>
-| "ANY"                         (. output() << " . "; .)
+| "ANY"                         (. output() << '.'; .)
 | "SYNC"
-)
 .
 
 /*------------------------------------------------------------------------------------*/
@@ -403,7 +445,7 @@ Resolver
                                     output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
                                     in_verbatim = true;
                                  .)
-  Condition                      (. output() << copy_verbatim(pos_start, la->pos) << "\n*/\n";
+  Condition                      (. output() << copy_verbatim(pos_start, la->pos) << "\n*/\n" << indent();
                                     in_verbatim = false;
                                  .)
 .
@@ -413,10 +455,12 @@ Condition = { "(" Condition | ANY } ")" .
 /*------------------------------------------------------------------------------------*/
 
 TokenExpr
-=
+=                               (. tokens << indent(); .)
   TokenTerm
   {
-    WEAK '|'                    (. tokens << "\n\t| "; .)
+    WEAK '|'                    (. tokens << '\n' << indent(-1) << "|\t";
+                                   indent(+1);
+                                .)
     TokenTerm
   }
 .
@@ -424,31 +468,36 @@ TokenExpr
 TokenTerm
 =
   TokenFactor
-  { TokenFactor }
-  [ "CONTEXT"               (. tokens << "/*" C2A_TODO ": CONTEXT specification not supported in ANTLR\n"; .)
-    '(' TokenExpr           (. tokens << "*/\n"; .)
+  {                             (. tokens << '\n' << indent(); .)
+    TokenFactor
+  }
+  [ "CONTEXT"                   (. tokens << '\n' << indent() << "/*" C2A_TODO ": CONTEXT specification not supported in ANTLR\n"; .)
+    '(' TokenExpr               (. tokens << "*/\n"; .)
     ')'
   ]
 .
 
 TokenFactor                     (. std::wstring name; bool is_literal; .)
 =
-( Sym<name, is_literal, tokens>
+  Sym<name, is_literal, tokens>
                                 (. if(is_literal) {
                                        tokens << name;
                                    } else {
-                                       if (! charset_names.contains_key(name))
-                                           SemErr(L"Character Class used but not defined");
-                                       tokens << charset_names.at(name);
+                                       if (! charset_names.contains_key(name)) {
+                                           SemErr(std::wstring(L"Character Class used but not defined: "
+                                                               + name).c_str());
+                                           tokens << name;
+                                       } else {
+                                           tokens << charset_names.at(name);
+                                       }
                                    }
                                 .)
-| '('                           (. tokens << "( "; .)
-	TokenExpr ')'               (. tokens << " )"; .)
-| '['                           (. tokens << "( "; .)
-	TokenExpr ']'               (. tokens << " )?"; .)
-| '{'                           (. tokens << "( "; .)
-	TokenExpr '}'               (. tokens << " )*"; .)
-)
+| '('                           (. tokens << "(\n"; indent(+1); .)
+	TokenExpr ')'               (. tokens << '\n' << indent(-1) << ')'; .)
+| '['                           (. tokens << "(\n"; indent(+1); .)
+	TokenExpr ']'               (. tokens << '\n' << indent(-1) << ")?"; .)
+| '{'                           (. tokens << "(\n"; indent(+1); .)
+	TokenExpr '}'               (. tokens << '\n' << indent(-1) << ")*"; .)
 .
 
 /*------------------------------------------------------------------------------------*/
@@ -470,18 +519,18 @@ Sym<std::wstring& name, bool& is_literal, std::wostream& output_to>
 Attribs
 =
   '<'                           (. auto pos_start = la->pos;
-                                   output() << "[";
+                                   output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << "]";
+  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << ']';
                                    in_verbatim = false;
                                 .)
   '>'
 | "<."                          (. auto pos_start = la->pos;
-                                   output() << "[";
+                                   output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << "]";
+  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << ']';
                                    in_verbatim = false;
                                 .)
   ".>"
@@ -492,7 +541,7 @@ SemText<std::wostream& output_to>
   "(."                          (. auto pos_start = la->pos;
 	                               in_verbatim = true;
                                 .)
-  { ANY | badString | "(." }    (. output_to << "{ " << copy_verbatim(pos_start, la->pos) << " }\n";
+  { ANY | badString | "(." }    (. output_to << "{ " << copy_verbatim(pos_start, la->pos) << " }";
 	                               in_verbatim = false;
                                 .)
   ".)"
