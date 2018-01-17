@@ -4,7 +4,7 @@
 #include <algorithm>
 
 
-#define C2A_TODO "TODO (coco_to_antlr): "
+#define C2A_TODO "FIXME (coco_to_antlr): "
 
 template<class Key, class Value>
 class UBiMap {
@@ -31,4 +31,8 @@ public:
     }
 };
 
+
 enum class name_type { charset, token, production };
+
+
+const std::wstring coco_and_antlr_escaped_chars = L"nrbtf\\";

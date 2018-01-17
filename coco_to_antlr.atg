@@ -208,7 +208,7 @@ Coco
                                             << "\n}\n\n";
                                 .)
 
-  [ "IGNORECASE"                (. output() << "//" C2A_TODO ": IGNORECASE not possible in ANTLR\n"; .)
+  [ "IGNORECASE"                (. output() << "//" C2A_TODO "IGNORECASE not possible in ANTLR\n"; .)
   ]
   [ "CHARACTERS"                (. characters << "// CHARACTERS from line " << std::to_wstring(t->line) << '\n'; .)
     { SetDecl }
@@ -228,7 +228,7 @@ Coco
     "FROM" TokenExpr            (.  tokens << " .*?\n"; .)
     "TO" TokenExpr
     [ "NESTED"                  (. tokens << '\n' << indent()
-                                          << "// " C2A_TODO ": implement NESTED for this COMMENT\n";
+                                          << "// " C2A_TODO "implement NESTED for this COMMENT\n";
                                 .)
     ]                           (. tokens << indent(-1) << ") -> channel(HIDDEN);\n\n"; .)
   }                             (. tokens << '\n'; .)
@@ -291,7 +291,7 @@ Set<std::wostream& output_to>
   { '+'                         (. output_to << '\n' << indent() << "| "; .)
     SimSet<output_to>
   | '-'                         (. output_to << '\n' << indent()
-                                             << "//" C2A_TODO ": the following subset was negated, reformulate for ANTLR"
+                                             << "//" C2A_TODO "the following subset was substracted from the previous, reformulate for ANTLR"
                                              << '\n' << indent() << "~("; .)
     SimSet<output_to>          (. output_to << ")\n"; .)
   }
@@ -325,8 +325,18 @@ Char<std::wstring& name, std::wostream& output_to>
 =
 	char                        (. name = std::wstring(t->val);
 
-                                   if(name.find(L"\\") != std::wstring::npos)
-                                       output_to << "/*" C2A_TODO ": escaped character, check meaning: */";
+                                   size_t pos = -2;
+                                   while (pos = name.find(L'\\', pos+2)) {
+                                       if(pos == std::wstring::npos)
+                                           break; // no more escapes
+
+                                       const auto& escaped = name[pos+1];
+                                       if (coco_and_antlr_escaped_chars.find(escaped) == std::wstring::npos) {
+                                           // some non-common escape char
+                                           output_to << "/*" C2A_TODO "escaped character, check meaning: */";
+                                           break;
+                                       }
+                                   }
                                 .)
 .
 
@@ -334,7 +344,7 @@ String<std::wstring& name, std::wostream& output_to>
 =   string                      (. name = std::wstring(t->val);
                                    name = name.substr(1, name.length() -2); // remove ""
                                    if(name.find(L"\\") != std::wstring::npos)
-                                       output_to << "/*" C2A_TODO ": escaped characters in string, check meaning: */ ";
+                                       output_to << "/*" C2A_TODO "escaped characters in string, check meaning: */ ";
                                 .)
 .
 
@@ -356,7 +366,7 @@ TokenDecl                       (. std::wstring name; bool is_literal; .)
                                    indent(+1);
                                 .)
   ( '=' TokenExpr '.'
-  |                             (. tokens << " //" C2A_TODO ": named token without body from Coco\n"; .)
+  |                             (. tokens << " //" C2A_TODO "named token without body from Coco\n"; .)
   )
   [                             (. tokens << '\n' << indent(); .)
     SemText<tokens>
@@ -474,7 +484,7 @@ TokenTerm
   {                             (. tokens << '\n' << indent(); .)
     TokenFactor
   }
-  [ "CONTEXT"                   (. tokens << '\n' << indent() << "/*" C2A_TODO ": CONTEXT specification not supported in ANTLR\n"; .)
+  [ "CONTEXT"                   (. tokens << '\n' << indent() << "/*" C2A_TODO "CONTEXT specification not supported in ANTLR\n"; .)
     '(' TokenExpr               (. tokens << "*/\n"; .)
     ')'
   ]
