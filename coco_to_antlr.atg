@@ -460,16 +460,19 @@ Factor
 
 Resolver
 =
-  "IF" "("                       (. auto pos_start = la->pos;
+  "IF" "("                       (. auto pos_start = la->pos; int end_pos;
                                     output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
                                     in_verbatim = true;
                                  .)
-  Condition                      (. output() << copy_verbatim(pos_start, la->pos) << "\n*/\n" << indent();
+  Condition<end_pos>             (. output() << copy_verbatim(pos_start, end_pos) << "\n*/\n" << indent();
                                     in_verbatim = false;
                                  .)
 .
 
-Condition = { "(" Condition | ANY } ")" .
+Condition<int& end_pos>
+= { "(" Condition<end_pos> | ANY } ")"
+                                (. end_pos = t->pos + 1; .)
+.
 
 /*------------------------------------------------------------------------------------*/
 
