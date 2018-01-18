@@ -26,8 +26,16 @@ void usage() {
 }
 
 
-int main(int argc, char* argv[]) {
+void do_parse(coco_wstring_t input, std::reference_wrapper<std::wostream> output) {
     using namespace coco_to_antlr;
+    auto scanner = std::make_unique<Scanner>(input.raw());
+    auto parser = std::make_unique<Parser>(scanner.get());
+    parser->output_stream = output;
+    parser->Parse();
+}
+
+
+int main(int argc, char* argv[]) {
     const std::vector<std::string> arguments(argv, argv + argc);
     if (arguments.size() < 2) {
         std::wcerr << L"not enough arguments!\n";
@@ -36,13 +44,11 @@ int main(int argc, char* argv[]) {
     }
 
     coco_wstring_t input_name(arguments.at(1).c_str());
-    auto scanner = std::make_unique<Scanner>(input_name.raw());
-    auto parser = std::make_unique<Parser>(scanner.get());
-    std::wofstream output_file;
     if (arguments.size() >= 3) {
-        output_file.open(arguments.at(2));
-        parser->output_stream = output_file;
+        std::wofstream output_file(arguments.at(2));
+        do_parse(input_name, output_file);
+    } else {
+        do_parse(input_name, std::ref(std::wcout));
     }
-    parser->Parse();
     return 0;
 }
