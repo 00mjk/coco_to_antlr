@@ -43,11 +43,11 @@ COMPILER Coco
 std::reference_wrapper<std::wostream> output_stream = std::ref(std::wcout);
 
 std::wostream& output() {
-	return output_stream.get();
+    return output_stream.get();
 }
 
 wchar_t* copy_verbatim(int pos_start, int pos_end) {
-	return scanner->buffer->GetString(pos_start, pos_end);
+    return scanner->buffer->GetString(pos_start, pos_end);
 }
 
 // buffer these sections to output them *after* the parser for ANTLR
@@ -142,44 +142,44 @@ int indent_level = 0;
   * @return whitespaces for current/new indentation level
   */
 std::wstring indent(int increment = 0) {
-	indent_level += increment;
-	assert(indent_level >= 0);
-	indent_level = std::max(0, indent_level);
-	return std::wstring(indent_level, '\t');
+    indent_level += increment;
+    assert(indent_level >= 0);
+    indent_level = std::max(0, indent_level);
+    return std::wstring(indent_level, '\t');
 }
 
 CHARACTERS
-	letter    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_".
-	digit     = "0123456789".
-	cr        = '\r'.
-	lf        = '\n'.
-	tab       = '\t'.
-	stringCh  = ANY - '"' - '\\' - cr - lf.
-	charCh    = ANY - '\'' - '\\' - cr - lf.
-	printable =  '\u0020' .. '\u007e'.
-	hex       = "0123456789abcdef".
+    letter    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_".
+    digit     = "0123456789".
+    cr        = '\r'.
+    lf        = '\n'.
+    tab       = '\t'.
+    stringCh  = ANY - '"' - '\\' - cr - lf.
+    charCh    = ANY - '\'' - '\\' - cr - lf.
+    printable =  '\u0020' .. '\u007e'.
+    hex       = "0123456789abcdef".
 
-	other = ANY - '/' - '*'.
-	no_lf = ANY - lf.
+    other = ANY - '/' - '*'.
+    no_lf = ANY - lf.
 
 TOKENS
-	ident     = letter { letter | digit }.
-	number    = digit { digit }.
-	string    = '"' { stringCh | '\\' printable } '"'.
-	badString = '"' { stringCh | '\\' printable } (cr | lf).
-	char      = '\'' ( charCh | '\\' printable { hex } ) '\''.
+    ident     = letter { letter | digit }.
+    number    = digit { digit }.
+    string    = '"' { stringCh | '\\' printable } '"'.
+    badString = '"' { stringCh | '\\' printable } (cr | lf).
+    char      = '\'' ( charCh | '\\' printable { hex } ) '\''.
 
 PRAGMAS
-	ddtSym    = '$' { digit | letter }.
-	optionSym = '$' letter { letter } '='
-	            { digit | letter
-	            | '-' | '.' | ':'
-	            }.
+    ddtSym    = '$' { digit | letter }.
+    optionSym = '$' letter { letter } '='
+                { digit | letter
+                | '-' | '.' | ':'
+                }.
 
-	comment1 = "/*" {'/' | other | '*' {'*'} other} '*' {'*'} '/'. // NESTED not supported!
-		(. if(!in_verbatim) output() << la->val; .)
-	comment2 = "//" { no_lf } lf.
-		(. if(!in_verbatim) output() << la->val; .)
+    comment1 = "/*" {'/' | other | '*' {'*'} other} '*' {'*'} '/'. // NESTED not supported!
+        (. if(!in_verbatim) output() << la->val; .)
+    comment2 = "//" { no_lf } lf.
+        (. if(!in_verbatim) output() << la->val; .)
 
 IGNORE cr + lf + tab
 
@@ -323,7 +323,7 @@ SimSet<std::wostream& output_to>
 
 Char<std::wstring& name, std::wostream& output_to>
 =
-	char                        (. name = std::wstring(t->val);
+    char                        (. name = std::wstring(t->val);
 
                                    size_t pos = -2;
                                    while (pos = name.find(L'\\', pos+2)) {
@@ -413,10 +413,10 @@ Expression
 Term
 =
 (   [ Resolver ]
-	Factor
-	{                           (. output() << '\n' << indent(); .)
-		Factor
-	}
+    Factor
+    {                           (. output() << '\n' << indent(); .)
+        Factor
+    }
 |
 )
 .
@@ -506,11 +506,11 @@ TokenFactor                     (. std::wstring name; bool is_literal; .)
                                    }
                                 .)
 | '('                           (. tokens << "(\n"; indent(+1); .)
-	TokenExpr ')'               (. tokens << '\n' << indent(-1) << ')'; .)
+    TokenExpr ')'               (. tokens << '\n' << indent(-1) << ')'; .)
 | '['                           (. tokens << "(\n"; indent(+1); .)
-	TokenExpr ']'               (. tokens << '\n' << indent(-1) << ")?"; .)
+    TokenExpr ']'               (. tokens << '\n' << indent(-1) << ")?"; .)
 | '{'                           (. tokens << "(\n"; indent(+1); .)
-	TokenExpr '}'               (. tokens << '\n' << indent(-1) << ")*"; .)
+    TokenExpr '}'               (. tokens << '\n' << indent(-1) << ")*"; .)
 .
 
 /*------------------------------------------------------------------------------------*/
@@ -552,10 +552,10 @@ Attribs
 SemText<std::wostream& output_to>
 =
   "(."                          (. auto pos_start = la->pos;
-	                               in_verbatim = true;
+                                   in_verbatim = true;
                                 .)
   { ANY | badString | "(." }    (. output_to << "{ " << copy_verbatim(pos_start, la->pos) << " }";
-	                               in_verbatim = false;
+                                   in_verbatim = false;
                                 .)
   ".)"
 .
