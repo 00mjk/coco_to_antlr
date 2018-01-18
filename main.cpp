@@ -1,6 +1,7 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <codecvt>
 #include "Parser.h"
 
 
@@ -45,7 +46,9 @@ int main(int argc, char* argv[]) {
 
     coco_wstring_t input_name(arguments.at(1).c_str());
     if (arguments.size() >= 3) {
+        std::locale locale(std::locale::classic(), new std::codecvt_utf8<wchar_t>); // necessary to output non-ASCII, see <https://stackoverflow.com/a/3950795>
         std::wofstream output_file(arguments.at(2));
+        output_file.imbue(locale);
         do_parse(input_name, output_file);
     } else {
         do_parse(input_name, std::ref(std::wcout));
