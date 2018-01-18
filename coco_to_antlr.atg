@@ -171,7 +171,7 @@ PRAGMAS
                 | '-' | '.' | ':'
                 }.
 
-    comment1 = "/*" {'/' | other | '*' {'*'} other} '*' {'*'} '/'. // NESTED not supported!
+    comment1 = "/*" {'/' | other | '*' {'*'} other} '*' {'*'} '/'. //TODO: NESTED comments not supported!
         (. if(!in_verbatim) output() << la->val; .)
     comment2 = "//" { no_lf } lf.
         (. if(!in_verbatim) output() << la->val; .)
@@ -182,7 +182,7 @@ IGNORE cr + lf + tab
 
 PRODUCTIONS
 
-Coco
+Coco                            (. token_names.insert(L"EOF", L"EOF"); /* special token in both languages */ .)
 =
                                 (. auto pos_start_includes = la->pos; .)
   { ANY }                       (. auto pos_end_includes = la->pos;
@@ -343,8 +343,14 @@ Char<std::wstring& name>
 String<std::wstring& name>
 =   string                      (. name = std::wstring(t->val);
                                    name = name.substr(1, name.length() -2); // remove ""
-                                   if(name.find(L"\\") != std::wstring::npos)
+                                   if(name.find(L'\\') != std::wstring::npos)
                                        output() << "/*" C2A_TODO "escaped characters in string, check meaning: */ ";
+                                   for(auto pos = name.find(L'\'');
+                                       pos != std::wstring::npos;
+                                       pos = name.find(L'\'', pos+2))
+                                   {
+                                       name.replace(pos, 1, L"\\'");
+                                   }
                                 .)
 .
 
