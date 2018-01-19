@@ -462,7 +462,9 @@ Factor
 | '{'                           (. output() << "(\n"; indent(+1); .)
    Expression '}'               (. output() << '\n' << indent(-1) << ")*"; .)
 | SemText
-| "ANY"                         (. output() << '.'; .)
+| "ANY"                         (. output() << '.';
+                                   if(current_output == name_type::production)
+                                       output() << " /*" C2A_TODO "implement Coco ANY in ANTLR lexer, not possible in parser */\n"; .)
 | "SYNC"
 .
 
