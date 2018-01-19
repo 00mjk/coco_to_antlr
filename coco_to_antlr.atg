@@ -213,10 +213,10 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
 
                                 (. current_output = name_type::token; .)
   [ "TOKENS"                    (. output() << "// TOKENS from line " << std::to_wstring(t->line) << '\n'; .)
-    { TokenDecl }               (. output() << '\n'; .)
+    { TokenDecl<L""> }          (. output() << '\n'; .)
   ]
   [ "PRAGMAS"                   (. output() << "// PRAGMAS from line " << std::to_wstring(t->line) << '\n'; .)
-    { TokenDecl }               (. output() << '\n'; .)
+    { TokenDecl<L"HIDDEN"> }    (. output() << '\n'; .)
   ]
   { "COMMENTS"                  (. output() << "// COMMENTS from line " << std::to_wstring(t->line) << '\n';
                                    output() << define_name(name_type::token, L"COMMENT_" + std::to_wstring(t->pos))
@@ -356,7 +356,7 @@ String<std::wstring& name>
 
 /*------------------------------------------------------------------------------------*/
 
-TokenDecl                       (. std::wstring name; bool is_literal; .)
+TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
 =
   Sym<name, is_literal>
                                 (. if(is_literal) {
@@ -370,6 +370,8 @@ TokenDecl                       (. std::wstring name; bool is_literal; .)
                                 .)
   SYNC                          (. output() << '\n';
                                    indent(+1);
+                                   if(! channel.empty())
+                                       output() << indent() << "(\n";
                                 .)
   ( '=' TokenExpr '.'
   |                             (. output() << " //" C2A_TODO "named token without body from Coco\n"; .)
@@ -377,7 +379,11 @@ TokenDecl                       (. std::wstring name; bool is_literal; .)
   [                             (. output() << '\n' << indent(); .)
     SemText
   ]
-                                (. output() << '\n' << indent() << ";\n\n";
+                                (. if(! channel.empty()) {
+                                       output() << '\n' << indent() << ')';
+                                       output() << "-> channel(" << channel << ')';
+                                   }
+                                   output() << '\n' << indent() << ";\n\n";
                                    indent(-1);
                                 .)
 .
