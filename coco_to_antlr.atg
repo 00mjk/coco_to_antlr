@@ -238,6 +238,10 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                     indent(-1);
                                  .)
   }
+                                (. output() << "//Coco default: ignore blanks\n"
+                                            << define_name(name_type::token, L"IGNORE_WHITESPACE")
+                                            << ": ' ' -> channel(HIDDEN);\n";
+                                .)
 
   SYNC                          (. current_output = name_type::production;
                                    output() << "\n\n";
