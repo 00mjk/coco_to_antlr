@@ -78,6 +78,7 @@ UBiMap<std::wstring, std::wstring> production_names;
  * @param in_section which section the name was defined in, i.e. what type it has.
  *  NOTE: assumes that once we got into tokens section, no more charsets are defined, similarly for token & production
  */
+//TODO: name translation may yield keywords of target language (e.g. Char->char)
 std::wstring define_name(name_type in_section, const std::wstring& coco_name) {
     switch (in_section) {
         case name_type::charset:
@@ -227,7 +228,7 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
     "TO" TokenExpr
     [ "NESTED"                  (. output() << '\n' << indent()
                                             << "// " C2A_TODO "implement NESTED for this COMMENT\n";
-                                .)
+                                .) //TODO: we can implement NESTED with recursive lexer rules
     ]                           (. output() << indent(-1) << ") -> channel(HIDDEN);\n\n"; .)
   }                             (. output() << '\n'; .)
   { "IGNORE"                    (. output() << "// IGNORE from line " << std::to_wstring(t->line) << '\n';
@@ -570,6 +571,7 @@ Attribs
   ".>"
 .
 
+//TODO: variables/anything containing $
 SemText
 =
   "(."                          (. auto pos_start = la->pos;

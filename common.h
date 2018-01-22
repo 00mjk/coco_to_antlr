@@ -35,4 +35,4 @@ public:
 enum class name_type { charset, token, production };
 
 
-const std::wstring coco_and_antlr_escaped_chars = L"nrbtf\\";
+const std::wstring coco_and_antlr_escaped_chars = L"nrbtf'\\";
