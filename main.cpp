@@ -8,12 +8,24 @@
 //! wrapper around coco_string_* functions
 class coco_wstring_t {
 public:
-    explicit coco_wstring_t(const char* value) :
-            data(coco_string_create(value))
-    {};
+    explicit coco_wstring_t(const char* value) : data(coco_string_create(value)) {};
+
+    coco_wstring_t(const coco_wstring_t& other) : data(coco_string_create(other.data)) {};
+
+    coco_wstring_t(coco_wstring_t&& other) : data(other.data) {
+        other.data = nullptr;
+    };
+
+    coco_wstring_t& operator=(const coco_wstring_t& other) {
+        coco_wstring_t tmp(other); //copy-constructor
+        *this = std::move(tmp);
+        return *this;
+    };
+
     ~coco_wstring_t() {
         coco_string_delete(data);
     }
+
     wchar_t* raw() { return data; }
 private:
     wchar_t* data;
@@ -27,7 +39,7 @@ void usage() {
 }
 
 
-void do_parse(coco_wstring_t input, std::reference_wrapper<std::wostream> output) {
+void do_parse(coco_wstring_t& input, std::reference_wrapper<std::wostream> output) {
     using namespace coco_to_antlr;
     auto scanner = std::make_unique<Scanner>(input.raw());
     auto parser = std::make_unique<Parser>(scanner.get());
