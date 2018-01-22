@@ -56,9 +56,40 @@ std::wostream& output() {
     }
 }
 
+/** what to do with references to parser context, especially the current token `t->` */
+enum class copy_mode { copy, warn, replace };
 
-wchar_t* copy_verbatim(int pos_start, int pos_end) {
-    return scanner->buffer->GetString(pos_start, pos_end);
+void copy_verbatim(int pos_start, int pos_end, copy_mode mode = copy_mode::copy) {
+    const wchar_t* attr = scanner->buffer->GetString(pos_start, pos_end);
+    switch(mode) {
+    case copy_mode::copy:
+        output() << attr;
+        break;
+
+    case copy_mode::warn:
+        if(std::regex_search(attr, token_object_regex))
+            output() << L"/*" C2A_TODO "references to current Coco Token in this code block, adjust for ANTLR: */\n";
+        output() << attr;
+        break;
+
+    case copy_mode::replace:
+        std::wcmatch match;
+        // cannot use regex_iterator because it doesn't give us access to rest behind last match (here: attr after loop)
+        // cannot use regex_token_iterator because it doesn't tell us index of matched subgroup
+        while(std::regex_search(attr, match, token_object_regex)) {
+            output() << match.prefix();
+            for(size_t i = 2; i < match.size(); ++i) { // all relevant groups
+                auto sub_match = match[i];
+                if(sub_match.matched) {
+                    output() << token_object_replace_map.at(i);
+                    attr = sub_match.second; // rest of the input
+                    break;
+                }
+            }
+        }
+        output() << attr;
+        break;
+    };
 }
 
 size_t literal_token_index = 0;
@@ -191,17 +222,17 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                 .)
                                 
   "COMPILER" ident              (. output() << "grammar " << t->val << ";\n\n"
-                                            << "@parser::header {\n"
-                                            << copy_verbatim(pos_start_includes, pos_end_includes)
-                                            << "\n}\n\n";
+                                            << "@parser::header {\n";
+                                   copy_verbatim(pos_start_includes, pos_end_includes, copy_mode::warn);
+                                   output() << "\n}\n\n";
 
                                    auto pos_start_members = la->pos;
                                    in_verbatim = true;
                                 .)
   { ANY }                       (. in_verbatim = false;
-                                   output() << "@parser::members {\n"
-                                            << copy_verbatim(pos_start_members, la->pos)
-                                            << "\n}\n\n";
+                                   output() << "@parser::members {\n";
+                                   copy_verbatim(pos_start_members, la->pos, copy_mode::warn);
+                                   output() << "\n}\n\n";
                                 .)
 
   [ "IGNORECASE"                (. output() << "//" C2A_TODO "IGNORECASE not possible in ANTLR\n"; .)
@@ -402,7 +433,8 @@ AttrDecl //TODO: parameter conflicts with rule with same name
                                    in_verbatim = true;
                                 .)
   { ANY | badString }
-  '>'                           (. output() << copy_verbatim(pos_start, t->pos) << ']';
+  '>'                           (. copy_verbatim(pos_start, t->pos);
+                                   output() << ']';
                                    in_verbatim = false;
                                 .)
 | "<."                          (. auto pos_start = la->pos;
@@ -410,7 +442,8 @@ AttrDecl //TODO: parameter conflicts with rule with same name
                                    in_verbatim = true;
                                 .)
   { ANY | badString }
-  ".>"                          (. output() << copy_verbatim(pos_start, t->pos) << ']';
+  ".>"                          (. copy_verbatim(pos_start, t->pos);
+                                   output() << ']';
                                    in_verbatim = false;
                                 .)
 .
@@ -477,7 +510,8 @@ Resolver
                                     output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
                                     in_verbatim = true;
                                  .)
-  Condition<end_pos>             (. output() << copy_verbatim(pos_start, end_pos) << "\n*/\n" << indent();
+  Condition<end_pos>             (. copy_verbatim(pos_start, end_pos, copy_mode::replace);
+                                    output() << "\n*/\n" << indent();
                                     in_verbatim = false;
                                  .)
 .
@@ -557,7 +591,8 @@ Attribs
                                    output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << ']';
+  { ANY | badString }           (. copy_verbatim(pos_start, la->pos, copy_mode::replace);
+                                   output() << ']';
                                    in_verbatim = false;
                                 .)
   '>'
@@ -565,7 +600,8 @@ Attribs
                                    output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. output() << copy_verbatim(pos_start, la->pos) << ']';
+  { ANY | badString }           (. copy_verbatim(pos_start, la->pos, copy_mode::replace);
+                                   output() << ']';
                                    in_verbatim = false;
                                 .)
   ".>"
@@ -577,9 +613,13 @@ SemText
   "(."                          (. auto pos_start = la->pos;
                                    in_verbatim = true;
                                 .)
-  { ANY | badString | "(." }    (. output() << "{ " << copy_verbatim(pos_start, la->pos) << " }";
-                                   in_verbatim = false;
-                                .)
+  { ANY | badString | "(." }
+
+  (. in_verbatim = false;
+     output() << "{ ";
+     copy_verbatim(pos_start, la->pos, copy_mode::replace);
+     output() << " }";
+  .)
   ".)"
 .
 

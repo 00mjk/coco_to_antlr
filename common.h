@@ -2,6 +2,7 @@
 
 #include <unordered_map>
 #include <algorithm>
+#include <regex>
 
 
 #define C2A_TODO "FIXME (coco_to_antlr): "
@@ -36,3 +37,20 @@ enum class name_type { charset, token, production };
 
 
 const std::wstring coco_and_antlr_escaped_chars = L"nrbtf'\\";
+
+//TODO: parser fields without match in ANTLR (probably not needed): lookahead `la`, `scanner`, `SynErr`
+//TODO: $stop "attribute is available only to the after and finally actions" (actions.md)
+//TODO: -> is Coco C++ target only
+/** Matches references to the current (i.e. last matched) token in coco. */
+const std::wregex token_object_regex(L"t\\s*->\\s*((kind)|(val)|(pos)|(charPos)|(line)|(col))");
+/** Specifies how to map above references to ANTLR.
+ * See https://github.com/antlr/antlr4/blob/master/doc/actions.md#token-attributes and the Coco User Manual
+ */
+const std::unordered_map<size_t, std::wstring> token_object_replace_map = {
+        {2, L"$stop.type"},  // token type/kind
+        {3, L"$stop.text"},  // token value
+        {4, L"$stop.index"}, // token position (Coco: in bytes)
+        {5, L"$stop.index"}, // token position (Coco: in characters)
+        {6, L"$stop.line"},  // line
+        {7, L"$stop.pos"},   // column
+};
