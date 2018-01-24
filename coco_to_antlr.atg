@@ -204,9 +204,9 @@ PRAGMAS
                 }.
 
     comment1 = "/*" {'/' | other | '*' {'*'} other} '*' {'*'} '/'. //TODO: NESTED comments not supported!
-        (. if(!in_verbatim) output() << la->val; .)
+        (. if(!in_verbatim) output() << la->val << '\n'; .)
     comment2 = "//" { no_lf } lf.
-        (. if(!in_verbatim) output() << la->val; .)
+        (. if(!in_verbatim) output() << la->val << '\n'; .)
 
 IGNORE cr + lf + tab
 
@@ -299,9 +299,7 @@ Production
       SemText                   (. output() << '\n'; .)
     ]
     WEAK '='
-    Expression                  (. output() << '\n' << indent() << ";\n";
-                                   indent(-1);
-                                .)
+    Expression                  (. output() << '\n' << indent(-1) << ";\n"; .)
     WEAK '.'                    (. output() << '\n'; .)
 .
 
@@ -471,6 +469,7 @@ Term
 )
 .
 
+//TODO: comments are output earlier than correct
 Factor
 =
   [ "WEAK" ]                    (. std::wstring name; bool is_literal; .)
@@ -489,6 +488,8 @@ Factor
                                    }
                                  .)
   [ Attribs ]
+
+//TODO: only output braces around these 3 subrules when Expression is not a single Sym
 | '('                           (. output() << "(\n"; indent(+1); .)
    Expression ')'               (. output() << '\n' << indent(-1) << ')'; .)
 | '['                           (. output() << "(\n"; indent(+1); .)
@@ -561,6 +562,8 @@ TokenFactor                     (. std::wstring name; bool is_literal; .)
                                        }
                                    }
                                 .)
+
+//TODO: only output braces around these 3 subrules when TokenExpr is not a single Sym
 | '('                           (. output() << "(\n"; indent(+1); .)
     TokenExpr ')'               (. output() << '\n' << indent(-1) << ')'; .)
 | '['                           (. output() << "(\n"; indent(+1); .)
@@ -585,6 +588,7 @@ Sym<std::wstring& name, bool& is_literal>
 
 /*------------------------------------------------------------------------------------*/
 
+//FIXME: Coco C++ mandates by-reference arguments for output, ANTLR doesn't allow them & mandates "returns []" clause and an action to assign to the return variable(s)
 Attribs
 =
   '<'                           (. auto pos_start = la->pos;

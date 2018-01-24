@@ -61,6 +61,7 @@ int main(int argc, char* argv[]) {
         std::locale locale(std::locale::classic(), new std::codecvt_utf8<wchar_t>); // necessary to output non-ASCII, see <https://stackoverflow.com/a/3950795>
         std::wofstream output_file(arguments.at(2));
         output_file.imbue(locale);
+        //TODO: input encoding
         do_parse(input_name, output_file);
     } else {
         do_parse(input_name, std::ref(std::wcout));
