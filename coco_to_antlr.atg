@@ -44,14 +44,14 @@ std::reference_wrapper<std::wostream> output_stream = std::ref(std::wcout);
 // buffer these sections to output them *after* the parser for ANTLR
 std::wstringstream characters, tokens;
 
-name_type current_output = name_type::production;
+output_type current_output = output_type::productions;
 std::wostream& output() {
     switch(current_output) {
-        case name_type::production:
+        case output_type::productions:
             return output_stream.get();
-        case name_type::token:
+        case output_type::tokens:
             return tokens;
-        case name_type::charset:
+        case output_type::charsets:
             return characters;
     }
 }
@@ -59,17 +59,18 @@ std::wostream& output() {
 /** what to do with references to parser context, especially the current token `t->` */
 enum class copy_mode { copy, warn, replace };
 
-void copy_verbatim(int pos_start, int pos_end, copy_mode mode = copy_mode::copy) {
+/** copy the range [pos_start:pos_end) from scanner to output, obeying copy_mode */
+void copy_verbatim(std::wostream& output, int pos_start, int pos_end, copy_mode mode = copy_mode::copy) {
     const wchar_t* attr = scanner->buffer->GetString(pos_start, pos_end);
     switch(mode) {
     case copy_mode::copy:
-        output() << attr;
+        output << attr;
         break;
 
     case copy_mode::warn:
         if(std::regex_search(attr, token_object_regex))
-            output() << L"/*" C2A_TODO "references to current Coco Token in this code block, adjust for ANTLR: */\n";
-        output() << attr;
+            output << L"/*" C2A_TODO "references to current Coco Token in this code block, adjust for ANTLR: */\n";
+        output << attr;
         break;
 
     case copy_mode::replace:
@@ -77,17 +78,17 @@ void copy_verbatim(int pos_start, int pos_end, copy_mode mode = copy_mode::copy)
         // cannot use regex_iterator because it doesn't give us access to rest behind last match (here: attr after loop)
         // cannot use regex_token_iterator because it doesn't tell us index of matched subgroup
         while(std::regex_search(attr, match, token_object_regex)) {
-            output() << match.prefix();
+            output << match.prefix();
             for(size_t i = 2; i < match.size(); ++i) { // all relevant groups
                 auto sub_match = match[i];
                 if(sub_match.matched) {
-                    output() << token_object_replace_map.at(i);
+                    output << token_object_replace_map.at(i);
                     attr = sub_match.second; // rest of the input
                     break;
                 }
             }
         }
-        output() << attr;
+        output << attr;
         break;
     };
 }
@@ -223,7 +224,7 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                 
   "COMPILER" ident              (. output() << "grammar " << t->val << ";\n\n"
                                             << "@parser::header {\n";
-                                   copy_verbatim(pos_start_includes, pos_end_includes, copy_mode::warn);
+                                   copy_verbatim(output(), pos_start_includes, pos_end_includes, copy_mode::warn);
                                    output() << "\n}\n\n";
 
                                    auto pos_start_members = la->pos;
@@ -231,19 +232,19 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                 .)
   { ANY }                       (. in_verbatim = false;
                                    output() << "@parser::members {\n";
-                                   copy_verbatim(pos_start_members, la->pos, copy_mode::warn);
+                                   copy_verbatim(output(), pos_start_members, la->pos, copy_mode::warn);
                                    output() << "\n}\n\n";
                                 .)
 
   [ "IGNORECASE"                (. output() << "//" C2A_TODO "IGNORECASE not possible in ANTLR\n"; .)
   ]
-  [ "CHARACTERS"                (. current_output = name_type::charset;
+  [ "CHARACTERS"                (. current_output = output_type::charsets;
                                    output() << "// CHARACTERS from line " << std::to_wstring(t->line) << '\n';
                                 .)
     { SetDecl }
   ]
 
-                                (. current_output = name_type::token; .)
+                                (. current_output = output_type::tokens; .)
   [ "TOKENS"                    (. output() << "// TOKENS from line " << std::to_wstring(t->line) << '\n'; .)
     { TokenDecl<L""> }          (. output() << '\n'; .)
   ]
@@ -275,7 +276,7 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                             << ": ' ' -> channel(HIDDEN);\n";
                                 .)
 
-  SYNC                          (. current_output = name_type::production;
+  SYNC                          (. current_output = output_type::productions;
                                    output() << "\n\n";
                                 .)
   "PRODUCTIONS"                 (. output() << "// PRODUCTIONS from line " << std::to_wstring(t->line) << '\n'; .)
@@ -424,14 +425,23 @@ TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
 
 /*------------------------------------------------------------------------------------*/
 
-AttrDecl //TODO: parameter conflicts with rule with same name
+/**
+ * AttrDecl: rule for formal attributes of a rule definition. Parses the instrumented language!
+ *
+ * NOTE: Coco C++ mandates by-reference arguments for output,
+ * ANTLR doesn't allow them & mandates "returns []" clause and an action to assign to the return variable(s)
+ *
+ * //TODO: only C++ supported yet, Java C# etc have other syntax ("out" parameter)
+ * //TODO: parameter names may conflict with rule names
+ */
+AttrDecl
 =
   '<'                           (. auto pos_start = la->pos;
                                    output() << '[';
                                    in_verbatim = true;
                                 .)
   { ANY | badString }
-  '>'                           (. copy_verbatim(pos_start, t->pos);
+  '>'                           (. copy_verbatim(output(), pos_start, t->pos);
                                    output() << ']';
                                    in_verbatim = false;
                                 .)
@@ -440,7 +450,7 @@ AttrDecl //TODO: parameter conflicts with rule with same name
                                    in_verbatim = true;
                                 .)
   { ANY | badString }
-  ".>"                          (. copy_verbatim(pos_start, t->pos);
+  ".>"                          (. copy_verbatim(output(), pos_start, t->pos);
                                    output() << ']';
                                    in_verbatim = false;
                                 .)
@@ -498,7 +508,7 @@ Factor
    Expression '}'               (. output() << '\n' << indent(-1) << ")*"; .)
 | SemText
 | "ANY"                         (. output() << '.';
-                                   if(current_output == name_type::production)
+                                   if(current_output == output_type::productions)
                                        output() << " /*" C2A_TODO "implement Coco ANY in ANTLR lexer, not possible in parser */\n"; .)
 | "SYNC"
 .
@@ -511,7 +521,7 @@ Resolver
                                     output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
                                     in_verbatim = true;
                                  .)
-  Condition<end_pos>             (. copy_verbatim(pos_start, end_pos, copy_mode::replace);
+  Condition<end_pos>             (. copy_verbatim(output(), pos_start, end_pos, copy_mode::replace);
                                     output() << "\n*/\n" << indent();
                                     in_verbatim = false;
                                  .)
@@ -588,14 +598,22 @@ Sym<std::wstring& name, bool& is_literal>
 
 /*------------------------------------------------------------------------------------*/
 
-//FIXME: Coco C++ mandates by-reference arguments for output, ANTLR doesn't allow them & mandates "returns []" clause and an action to assign to the return variable(s)
+/**
+ * Attribs: rule for actual attributes of a rule invocation. Parses the instrumented language!
+ *
+ * NOTE: Coco C++ mandates by-reference arguments for output,
+ * ANTLR doesn't allow them & mandates "returns []" clause and an action to assign to the return variable(s)
+ *
+ * //TODO: only C++ supported yet, Java C# etc have other syntax ("out" parameter)
+ */
+//XXX: separate output in actual attributes
 Attribs
 =
   '<'                           (. auto pos_start = la->pos;
                                    output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. copy_verbatim(pos_start, la->pos, copy_mode::replace);
+  { ANY | badString }           (. copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
                                    output() << ']';
                                    in_verbatim = false;
                                 .)
@@ -604,7 +622,7 @@ Attribs
                                    output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. copy_verbatim(pos_start, la->pos, copy_mode::replace);
+  { ANY | badString }           (. copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
                                    output() << ']';
                                    in_verbatim = false;
                                 .)
@@ -612,6 +630,7 @@ Attribs
 .
 
 //TODO: variables/anything containing $
+//XXX: replace output parameter names by $name =
 SemText
 =
   "(."                          (. auto pos_start = la->pos;
@@ -621,7 +640,7 @@ SemText
 
   (. in_verbatim = false;
      output() << "{ ";
-     copy_verbatim(pos_start, la->pos, copy_mode::replace);
+     copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
      output() << " }";
   .)
   ".)"
