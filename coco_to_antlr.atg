@@ -35,6 +35,7 @@ Coco/R itself) does not fall under the GNU General Public License.
 #include <sstream>
 #include <iostream>
 #include <cassert>
+#include <list>
 #include <functional>
 #include "common.h"
 
@@ -435,25 +436,117 @@ TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
  * //TODO: parameter names may conflict with rule names
  */
 AttrDecl
-=
-  '<'                           (. auto pos_start = la->pos;
-                                   output() << '[';
+=                               (. std::wstring decl;
+                                   std::list<std::wstring> decls;
+                                   bool is_output_param;
+                                .)
+//TODO: may be empty <braces>
+(
+  '<'
+  SingleAttrDecl<decl, is_output_param>
+                                (. if(is_output_param) {
+                                       decls.push_back(decl);
+                                   } else {
+                                       output() << decl;
+                                   }
+                                .)
+  { ',' SingleAttrDecl<decl, is_output_param>
+                                (. if(is_output_param) {
+                                       decls.push_back(decl);
+                                   } else {
+                                       output() << ", " << decl;
+                                   }
+                                .)
+  }
+  '>'
+| "<."
+  SingleAttrDecl_alt<decl, is_output_param>
+                                (. if(is_output_param) {
+                                       decls.push_back(decl);
+                                   } else {
+                                       output() << decl;
+                                   }
+                                .)
+  { ',' SingleAttrDecl_alt<decl, is_output_param>
+                                (. if(is_output_param) {
+                                       decls.push_back(decl);
+                                   } else {
+                                       output() << ", " << decl;
+                                   }
+                                .)
+  }
+  ".>"
+)
+                               (. if( ! decls.empty() ) {
+                                      output() << indent() << " returns[";
+                                      bool is_first = true;
+                                      for(auto& decl : decls) {
+                                          output() << (is_first? "" : ", ")
+                                                   << decl;
+                                          is_first = false;
+                                      }
+                                      output() << "]";
+                                  }
+                               .)
+.
+
+SingleAttrDecl<std::wstring& decl, bool& is_output_param>
+=                               (. auto pos_start = la->pos;
                                    in_verbatim = true;
+                                   Token* ref_token = nullptr;
                                 .)
-  { ANY | badString }
-  '>'                           (. copy_verbatim(output(), pos_start, t->pos);
-                                   output() << ']';
-                                   in_verbatim = false;
+    // type declaration
+    CppTypeSpec<ref_token>      (. int pos_end;
+                                   if(ref_token) {
+                                       pos_end = ref_token->pos;
+                                       is_output_param = true;
+                                   } else {
+                                       pos_end = la->pos;
+                                       is_output_param = true;
+                                   };
                                 .)
-| "<."                          (. auto pos_start = la->pos;
-                                   output() << '[';
+    // parameter name
+    ident
+                                (. std::wostringstream decl_stream;
+                                   copy_verbatim(decl_stream, pos_start, pos_end);
+                                   decl = decl_stream.str() + L" " + t->val;
+                                .)
+.
+
+//! copy of SingleAttrDecl, but with Follow-set {, .>} instead of {, >}
+SingleAttrDecl_alt<std::wstring& decl, bool& is_output_param>
+=                               (. auto pos_start = la->pos;
                                    in_verbatim = true;
+                                   Token* ref_token = nullptr;
                                 .)
-  { ANY | badString }
-  ".>"                          (. copy_verbatim(output(), pos_start, t->pos);
-                                   output() << ']';
-                                   in_verbatim = false;
+    // type declaration
+    CppTypeSpec<ref_token>      (. int pos_end;
+                                   if(ref_token) {
+                                       pos_end = ref_token->pos;
+                                       is_output_param = true;
+                                   } else {
+                                       pos_end = la->pos;
+                                       is_output_param = true;
+                                   };
                                 .)
+    // parameter name
+    ident
+                                (. std::wostringstream decl_stream;
+                                   copy_verbatim(decl_stream, pos_start, pos_end);
+                                   decl = decl_stream.str() + L" " + t->val;
+                                .)
+.
+
+//NOTE: cpp parameter declaration does not implement multi-word typenames (e.g. signed long) except leading const
+CppTypeSpec<Token*& ref_token>
+=                               (. Token* dummy; .)
+	[ "const" ]
+	ident { "::" ident }
+	[   '<' CppTypeSpec<dummy>
+		{ ',' CppTypeSpec<dummy> } '>'
+	]
+	[ "&"                       (. ref_token = t; .)
+	]
 .
 
 /*------------------------------------------------------------------------------------*/
