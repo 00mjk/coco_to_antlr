@@ -291,9 +291,9 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
 
 
 Production
-=
+=                               (. std::list<std::wstring> arguments; .)
     ident                       (. output() << define_name(name_type::production, std::wstring(t->val)); .)
-    [ AttrDecl ]
+    [ AttrDecl<arguments> ]
                                 (. output() << ":\n";
                                    indent(+1);
                                 .)
@@ -435,52 +435,58 @@ TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
  * //TODO: only C++ supported yet, Java C# etc have other syntax ("out" parameter)
  * //TODO: parameter names may conflict with rule names
  */
-AttrDecl
-=                               (. std::wstring decl;
-                                   std::list<std::wstring> decls;
+AttrDecl<. std::list<std::wstring>& attr_names .>
+=                               (. std::wstring decl, name;
+                                   std::list<std::wstring> attr_out;
                                    bool is_output_param;
+                                   output() << "[";
                                 .)
 //TODO: may be empty <braces>
-(
-  '<'
-  SingleAttrDecl<decl, is_output_param>
-                                (. if(is_output_param) {
-                                       decls.push_back(decl);
-                                   } else {
-                                       output() << decl;
-                                   }
+	(
+		'<'
+		SingleAttrDecl<decl, name, is_output_param>
+	                            (. if(is_output_param) {
+	                                   attr_out.push_back(decl);
+	                               } else {
+	                                   output() << decl;
+	                               }
+	                               attr_names.push_back(name);
                                 .)
-  { ',' SingleAttrDecl<decl, is_output_param>
-                                (. if(is_output_param) {
-                                       decls.push_back(decl);
-                                   } else {
-                                       output() << ", " << decl;
-                                   }
+		{ ',' SingleAttrDecl<decl, name, is_output_param>
+	                            (. if(is_output_param) {
+	                                   attr_out.push_back(decl);
+	                               } else {
+	                                   output() << decl;
+	                               }
+	                               attr_names.push_back(name);
                                 .)
-  }
-  '>'
-| "<."
-  SingleAttrDecl_alt<decl, is_output_param>
-                                (. if(is_output_param) {
-                                       decls.push_back(decl);
-                                   } else {
-                                       output() << decl;
-                                   }
+		}
+		'>'
+	|   "<."
+		SingleAttrDecl_alt<decl, name, is_output_param>
+	                            (. if(is_output_param) {
+	                                   attr_out.push_back(decl);
+	                               } else {
+	                                   output() << decl;
+	                               }
+	                               attr_names.push_back(name);
                                 .)
-  { ',' SingleAttrDecl_alt<decl, is_output_param>
-                                (. if(is_output_param) {
-                                       decls.push_back(decl);
-                                   } else {
-                                       output() << ", " << decl;
-                                   }
+		{ ',' SingleAttrDecl_alt<decl, name, is_output_param>
+	                            (. if(is_output_param) {
+	                                   attr_out.push_back(decl);
+	                               } else {
+	                                   output() << decl;
+	                               }
+	                               attr_names.push_back(name);
                                 .)
-  }
-  ".>"
-)
-                               (. if( ! decls.empty() ) {
+		}
+		".>"
+	)
+                               (. output() << "]";
+                                  if( ! attr_out.empty() ) {
                                       output() << indent() << " returns[";
                                       bool is_first = true;
-                                      for(auto& decl : decls) {
+                                      for(auto& decl : attr_out) {
                                           output() << (is_first? "" : ", ")
                                                    << decl;
                                           is_first = false;
@@ -490,62 +496,47 @@ AttrDecl
                                .)
 .
 
-SingleAttrDecl<std::wstring& decl, bool& is_output_param>
-=                               (. auto pos_start = la->pos;
+SingleAttrDecl<std::wstring& decl, std::wstring& name, bool& is_output_param>
+=                               (. int pos_start = la->pos,  pos_end;
                                    in_verbatim = true;
-                                   Token* ref_token = nullptr;
                                 .)
-    // type declaration
-    CppTypeSpec<ref_token>      (. int pos_end;
-                                   if(ref_token) {
-                                       pos_end = ref_token->pos;
-                                       is_output_param = true;
-                                   } else {
-                                       pos_end = la->pos;
-                                       is_output_param = true;
-                                   };
-                                .)
-    // parameter name
-    ident
-                                (. std::wostringstream decl_stream;
+    CppTypeSpec<pos_end, is_output_param>
+                                (. in_verbatim = false;
+                                   std::wostringstream decl_stream;
                                    copy_verbatim(decl_stream, pos_start, pos_end);
-                                   decl = decl_stream.str() + L" " + t->val;
+                                .)
+    ident                       (. name = t->val;
+                                   decl = decl_stream.str() + L" " + name;
                                 .)
 .
 
 //! copy of SingleAttrDecl, but with Follow-set {, .>} instead of {, >}
-SingleAttrDecl_alt<std::wstring& decl, bool& is_output_param>
-=                               (. auto pos_start = la->pos;
+SingleAttrDecl_alt<std::wstring& decl, std::wstring& name, bool& is_output_param>
+=                               (. int pos_start = la->pos,  pos_end;
                                    in_verbatim = true;
-                                   Token* ref_token = nullptr;
                                 .)
-    // type declaration
-    CppTypeSpec<ref_token>      (. int pos_end;
-                                   if(ref_token) {
-                                       pos_end = ref_token->pos;
-                                       is_output_param = true;
-                                   } else {
-                                       pos_end = la->pos;
-                                       is_output_param = true;
-                                   };
-                                .)
-    // parameter name
-    ident
-                                (. std::wostringstream decl_stream;
+    CppTypeSpec<pos_end, is_output_param>
+                                (. in_verbatim = false;
+                                   std::wostringstream decl_stream;
                                    copy_verbatim(decl_stream, pos_start, pos_end);
-                                   decl = decl_stream.str() + L" " + t->val;
+                                .)
+    ident                       (. name = t->val;
+                                   decl = decl_stream.str() + L" " + name;
                                 .)
 .
 
-//NOTE: cpp parameter declaration does not implement multi-word typenames (e.g. signed long) except leading const
-CppTypeSpec<Token*& ref_token>
-=                               (. Token* dummy; .)
+//NOTE: cpp parameter declaration does not implement multi-word typenames (e.g. signed long) except const sometimes
+CppTypeSpec<int& pos_end, bool& is_output_param>
+=                               (. int dummy_i; bool dummy_b;
+                                   is_output_param = false;
+                                .)
 	[ "const" ]
 	ident { "::" ident }
-	[   '<' CppTypeSpec<dummy>
-		{ ',' CppTypeSpec<dummy> } '>'
+	[   '<' CppTypeSpec<dummy_i, dummy_b>
+		{ ',' CppTypeSpec<dummy_i, dummy_b> } '>'
 	]
-	[ "&"                       (. ref_token = t; .)
+	[ "const" ]                 (. pos_end = la->pos; .)
+	[ "&"                       (. is_output_param = true; .)
 	]
 .
 
