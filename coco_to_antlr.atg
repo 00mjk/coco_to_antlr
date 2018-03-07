@@ -36,10 +36,16 @@ Coco/R itself) does not fall under the GNU General Public License.
 #include <iostream>
 #include <cassert>
 #include <list>
+#include <unordered_set>
 #include <functional>
 #include "common.h"
 
 COMPILER Coco
+
+template<class Key>
+using set = std::unordered_set<Key>;
+template<class Key, class Value>
+using map = std::unordered_map<Key, Value>;
 
 std::reference_wrapper<std::wostream> output_stream = std::ref(std::wcout);
 // buffer these sections to output them *after* the parser for ANTLR
@@ -98,6 +104,7 @@ size_t literal_token_index = 0;
 
 bool in_verbatim = true;
 
+//TODO: all that information about symbols is probably better served by a real symbol table class
 
 // maps from coco character set names to their uppercase-variant as used for ANTLR
 UBiMap<std::wstring, std::wstring> charset_names;
@@ -105,6 +112,9 @@ UBiMap<std::wstring, std::wstring> charset_names;
 UBiMap<std::wstring, std::wstring> token_names;
 // maps from coco production rule names to their uppercase-variant as used for ANTLR
 UBiMap<std::wstring, std::wstring> production_names;
+
+//maps from coco production rules to their arguments, telling if they are extracted output parameters (see AttrDecl)
+std::unordered_map<std::wstring, std::vector<bool>> production_output_arguments;
 
 /**
  * @return the name to be used in ANTLR instead of coco_name
@@ -176,6 +186,29 @@ std::wstring indent(int increment = 0) {
     indent_level = std::max(0, indent_level);
     return std::wstring(indent_level, '\t');
 }
+
+
+using production_arguments = map<std::wstring, bool>;
+//! helper (code-dedup) for AttrDecl
+void process_single_decl(
+		const std::wstring& decl,
+		const std::wstring& name,
+		const bool is_output_param,
+		std::list<std::wstring>& attr_out,
+		production_arguments& arguments,
+		bool& got_input_param)
+{
+	if(is_output_param) {
+		attr_out.push_back(decl);
+	} else {
+		if(! got_input_param) {
+			got_input_param = true;
+			output() << "[";
+		}
+		output() << decl;
+	}
+	arguments.insert({name, is_output_param});
+};
 
 CHARACTERS
     letter    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_".
@@ -291,17 +324,17 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
 
 
 Production
-=                               (. std::list<std::wstring> arguments; .)
+=                               (. production_arguments our_arguments; .)
     ident                       (. output() << define_name(name_type::production, std::wstring(t->val)); .)
-    [ AttrDecl<arguments> ]
+    [ AttrDecl<our_arguments> ]
                                 (. output() << ":\n";
                                    indent(+1);
                                 .)
     [                           (. output() << indent(); .)
-      SemText                   (. output() << '\n'; .)
+      SemText<our_arguments>    (. output() << '\n'; .)
     ]
     WEAK '='
-    Expression                  (. output() << '\n' << indent(-1) << ";\n"; .)
+    Expression<our_arguments>   (. output() << '\n' << indent(-1) << ";\n"; .)
     WEAK '.'                    (. output() << '\n'; .)
 .
 
@@ -413,7 +446,7 @@ TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
   |                             (. output() << " //" C2A_TODO "named token without body from Coco\n"; .)
   )
   [                             (. output() << '\n' << indent(); .)
-    SemText
+    SemText<. production_arguments() .>
   ]
                                 (. if(! channel.empty()) {
                                        output() << '\n' << indent() << ')';
@@ -435,54 +468,29 @@ TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
  * //TODO: only C++ supported yet, Java C# etc have other syntax ("out" parameter)
  * //TODO: parameter names may conflict with rule names
  */
-AttrDecl<. std::list<std::wstring>& attr_names .>
+AttrDecl<. production_arguments& arguments .>
 =                               (. std::wstring decl, name;
                                    std::list<std::wstring> attr_out;
-                                   bool is_output_param;
-                                   output() << "[";
+                                   bool is_output_param,  got_input_param = false;
                                 .)
 //TODO: may be empty <braces>
 	(
 		'<'
 		SingleAttrDecl<decl, name, is_output_param>
-	                            (. if(is_output_param) {
-	                                   attr_out.push_back(decl);
-	                               } else {
-	                                   output() << decl;
-	                               }
-	                               attr_names.push_back(name);
-                                .)
+	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
 		{ ',' SingleAttrDecl<decl, name, is_output_param>
-	                            (. if(is_output_param) {
-	                                   attr_out.push_back(decl);
-	                               } else {
-	                                   output() << decl;
-	                               }
-	                               attr_names.push_back(name);
-                                .)
+	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
 		}
 		'>'
 	|   "<."
 		SingleAttrDecl_alt<decl, name, is_output_param>
-	                            (. if(is_output_param) {
-	                                   attr_out.push_back(decl);
-	                               } else {
-	                                   output() << decl;
-	                               }
-	                               attr_names.push_back(name);
-                                .)
+	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
 		{ ',' SingleAttrDecl_alt<decl, name, is_output_param>
-	                            (. if(is_output_param) {
-	                                   attr_out.push_back(decl);
-	                               } else {
-	                                   output() << decl;
-	                               }
-	                               attr_names.push_back(name);
-                                .)
+	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
 		}
 		".>"
 	)
-                               (. output() << "]";
+                               (. if(got_input_param) output() << "]";
                                   if( ! attr_out.empty() ) {
                                       output() << indent() << " returns[";
                                       bool is_first = true;
@@ -542,29 +550,29 @@ CppTypeSpec<int& pos_end, bool& is_output_param>
 
 /*------------------------------------------------------------------------------------*/
 
-Expression
+Expression<. const production_arguments& local_arguments.>
 =                               (. output() << indent(); .)
-  Term
+  Term<local_arguments>
   { WEAK '|'                    (. output() << '\n' << indent(-1) << "|\t";
                                    indent(+1);
                                 .)
-    Term
+    Term<local_arguments>
   }
 .
 
-Term
+Term<.const production_arguments& local_arguments.>
 =
 (   [ Resolver ]
-    Factor
+    Factor<local_arguments>
     {                           (. output() << '\n' << indent(); .)
-        Factor
+        Factor<local_arguments>
     }
 |
 )
 .
 
 //TODO: comments are output earlier than correct
-Factor
+Factor<.const production_arguments& local_arguments.>
 =
   [ "WEAK" ]                    (. std::wstring name; bool is_literal; .)
   Sym<name, is_literal>
@@ -581,16 +589,16 @@ Factor
                                        }
                                    }
                                  .)
-  [ Attribs ]
+  [ Attribs<local_arguments> ]
 
 //TODO: only output braces around these 3 subrules when Expression is not a single Sym
 | '('                           (. output() << "(\n"; indent(+1); .)
-   Expression ')'               (. output() << '\n' << indent(-1) << ')'; .)
+   Expression<local_arguments> ')'  (. output() << '\n' << indent(-1) << ')'; .)
 | '['                           (. output() << "(\n"; indent(+1); .)
-   Expression ']'               (. output() << '\n' << indent(-1) << ")?"; .)
+   Expression<local_arguments> ']'  (. output() << '\n' << indent(-1) << ")?"; .)
 | '{'                           (. output() << "(\n"; indent(+1); .)
-   Expression '}'               (. output() << '\n' << indent(-1) << ")*"; .)
-| SemText
+   Expression<local_arguments> '}'  (. output() << '\n' << indent(-1) << ")*"; .)
+| SemText<local_arguments>
 | "ANY"                         (. output() << '.';
                                    if(current_output == output_type::productions)
                                        output() << " /*" C2A_TODO "implement Coco ANY in ANTLR lexer, not possible in parser */\n"; .)
@@ -690,9 +698,10 @@ Sym<std::wstring& name, bool& is_literal>
  *
  * //TODO: only C++ supported yet, Java C# etc have other syntax ("out" parameter)
  */
-//XXX: separate output in actual attributes
-Attribs
+Attribs<. const production_arguments& local_arguments .>
 =
+//XXX: replace any text in local_arguments by $text
+//XXX: remove output parameters from rule invocation
   '<'                           (. auto pos_start = la->pos;
                                    output() << '[';
                                    in_verbatim = true;
@@ -713,9 +722,9 @@ Attribs
   ".>"
 .
 
-//TODO: variables/anything containing $
+//TODO: variables/anything containing $ allowed in Coco, fails ANTLR
 //XXX: replace output parameter names by $name =
-SemText
+SemText<. const production_arguments& local_arguments .>
 =
   "(."                          (. auto pos_start = la->pos;
                                    in_verbatim = true;
