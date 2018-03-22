@@ -331,7 +331,7 @@ Production
                                    indent(+1);
                                 .)
     [                           (. output() << indent(); .)
-      SemText<our_arguments>    (. output() << '\n'; .)
+      SemText<our_arguments>    (. output() << '\n'; .) //FIXME: if top-level expression is an alternative-list, this code ends up only in the first alternative
     ]
     WEAK '='
     Expression<our_arguments>   (. output() << '\n' << indent(-1) << ";\n"; .)
