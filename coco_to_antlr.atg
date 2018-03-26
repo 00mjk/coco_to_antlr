@@ -47,6 +47,7 @@ using set = std::unordered_set<Key>;
 template<class Key, class Value>
 using map = std::unordered_map<Key, Value>;
 
+bool convert_instrumentation = true;
 std::reference_wrapper<std::wostream> output_stream = std::ref(std::wcout);
 // buffer these sections to output them *after* the parser for ANTLR
 std::wstringstream characters, tokens;
@@ -203,9 +204,11 @@ void process_single_decl(
 	} else {
 		if(! got_input_param) {
 			got_input_param = true;
-			output() << "[";
+			if(convert_instrumentation)
+				output() << "[";
 		}
-		output() << decl;
+		if(convert_instrumentation)
+			output() << decl;
 	}
 	arguments.insert({name, is_output_param});
 };
@@ -256,18 +259,22 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                    in_verbatim = false;
                                 .)
                                 
-  "COMPILER" ident              (. output() << "grammar " << t->val << ";\n\n"
-                                            << "@parser::header {\n";
-                                   copy_verbatim(output(), pos_start_includes, pos_end_includes, copy_mode::warn);
-                                   output() << "\n}\n\n";
+  "COMPILER" ident              (. output() << "grammar " << t->val << ";\n\n";
+                                   if(convert_instrumentation) {
+                                       output() << "@parser::header {\n";
+                                       copy_verbatim(output(), pos_start_includes, pos_end_includes, copy_mode::warn);
+                                       output() << "\n}\n\n";
+                                   }
 
                                    auto pos_start_members = la->pos;
                                    in_verbatim = true;
                                 .)
   { ANY }                       (. in_verbatim = false;
-                                   output() << "@parser::members {\n";
-                                   copy_verbatim(output(), pos_start_members, la->pos, copy_mode::warn);
-                                   output() << "\n}\n\n";
+                                   if(convert_instrumentation) {
+                                       output() << "@parser::members {\n";
+                                       copy_verbatim(output(), pos_start_members, la->pos, copy_mode::warn);
+                                       output() << "\n}\n\n";
+                                   }
                                 .)
 
   [ "IGNORECASE"                (. output() << "//" C2A_TODO "IGNORECASE not possible in ANTLR\n"; .)
@@ -490,8 +497,8 @@ AttrDecl<. production_arguments& arguments .>
 		}
 		".>"
 	)
-                               (. if(got_input_param) output() << "]";
-                                  if( ! attr_out.empty() ) {
+                               (. if(convert_instrumentation && got_input_param) output() << "]";
+                                  if(convert_instrumentation && ! attr_out.empty() ) {
                                       output() << indent() << " returns[";
                                       bool is_first = true;
                                       for(auto& decl : attr_out) {
@@ -610,11 +617,14 @@ Factor<.const production_arguments& local_arguments.>
 Resolver
 =
   "IF" "("                       (. auto pos_start = la->pos; int end_pos;
-                                    output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
+                                    if(convert_instrumentation)
+                                        output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
                                     in_verbatim = true;
                                  .)
-  Condition<end_pos>             (. copy_verbatim(output(), pos_start, end_pos, copy_mode::replace);
-                                    output() << "\n*/\n" << indent();
+  Condition<end_pos>             (. if(convert_instrumentation) {
+                                        copy_verbatim(output(), pos_start, end_pos, copy_mode::replace);
+                                        output() << "\n*/\n" << indent();
+                                    }
                                     in_verbatim = false;
                                  .)
 .
@@ -703,20 +713,24 @@ Attribs<. const production_arguments& local_arguments .>
 //XXX: replace any text in local_arguments by $text
 //XXX: remove output parameters from rule invocation
   '<'                           (. auto pos_start = la->pos;
-                                   output() << '[';
+                                   if(convert_instrumentation) output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
-                                   output() << ']';
+  { ANY | badString }           (. if(convert_instrumentation) {
+                                       copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
+                                       output() << ']';
+                                   }
                                    in_verbatim = false;
                                 .)
   '>'
 | "<."                          (. auto pos_start = la->pos;
-                                   output() << '[';
+                                   if(convert_instrumentation) output() << '[';
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
-                                   output() << ']';
+  { ANY | badString }           (. if(convert_instrumentation) {
+                                       copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
+                                       output() << ']';
+                                   }
                                    in_verbatim = false;
                                 .)
   ".>"
@@ -732,9 +746,11 @@ SemText<. const production_arguments& local_arguments .>
   { ANY | badString | "(." }
 
   (. in_verbatim = false;
-     output() << "{ ";
-     copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
-     output() << " }";
+     if(convert_instrumentation) {
+	     output() << "{ ";
+	     copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
+	     output() << " }";
+	 }
   .)
   ".)"
 .
