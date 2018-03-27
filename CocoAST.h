@@ -12,6 +12,7 @@ namespace CocoAST {
     using std::unique_ptr;
 
     struct CocoAstVisitor;
+    struct Production;
     struct Term;
     struct Factor;
     struct Resolver;
@@ -21,6 +22,7 @@ namespace CocoAST {
         virtual void visit(CocoAstVisitor &visitor) = 0;
 
         //TODO: append comments to "currently building" ast
+        //XXX: fill pos_start, pos_end in .atg
         int pos_start, pos_end;
     };
 
@@ -32,7 +34,7 @@ namespace CocoAST {
         void visit(CocoAstVisitor &visitor) override;
 
         bool literal;
-        wstring symbol;
+        wstring name;
     };
 
     struct AttrDecl : CocoAST  {
@@ -58,7 +60,10 @@ namespace CocoAST {
     struct Factor_Sym : Factor  {
         void visit(CocoAstVisitor &visitor) override;
         Sym sym;
-        unique_ptr<Attribs> attributes;
+        unique_ptr<Attribs> attribs;
+
+        // to be linked by AntlrOptimizer
+        Production* referenced_rule;
     };
 
     struct Factor_Braced : Factor  {
@@ -85,6 +90,10 @@ namespace CocoAST {
         void visit(CocoAstVisitor &visitor) override;
     };
 
+    struct Factor_SYNC : Factor  {
+        void visit(CocoAstVisitor &visitor) override;
+    };
+
     struct Resolver : CocoAST  {
         void visit(CocoAstVisitor &visitor) override;
     };
@@ -92,8 +101,8 @@ namespace CocoAST {
     struct Attribs : CocoAST  {
         void visit(CocoAstVisitor &visitor) override;
 
-        //! vector of (type, name, is_output_parameter)
-        std::vector< std::tuple<wstring, wstring, bool> > attributes;
+        //! vector of (expr, is_output_parameter)
+        std::vector< std::tuple<wstring, bool> > attributes;
     };
 
     struct Production : CocoAST {

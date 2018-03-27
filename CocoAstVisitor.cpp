@@ -6,6 +6,12 @@ namespace CocoAST {
 
     //void CocoAstVisitor::visit(CocoAST &ast) {}
 
+    void CocoAstVisitor::accept(std::list<Production> &productions) {
+        for(auto& prod : productions) {
+            prod.visit(*this);
+        }
+    }
+
     void CocoAstVisitor::visit(Production &ast) {
         if(ast.attr_decl)
             ast.attr_decl->visit(*this);
@@ -32,8 +38,8 @@ namespace CocoAST {
 
     void CocoAstVisitor::visit(Factor_Sym &ast) {
         ast.sym.visit(*this);
-        if(ast.attributes)
-            ast.attributes->visit(*this);
+        if(ast.attribs)
+            ast.attribs->visit(*this);
     }
 
     void CocoAstVisitor::visit(Factor_Braced &ast) {
@@ -53,6 +59,8 @@ namespace CocoAST {
     }
 
     void CocoAstVisitor::visit(Factor_ANY &ast) {}
+
+    void CocoAstVisitor::visit(Factor_SYNC &ast) {}
 
     void CocoAstVisitor::visit(Resolver &ast) {}
 

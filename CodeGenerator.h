@@ -13,19 +13,20 @@ namespace CocoAST {
     class CodeGenerator : public CocoAstVisitor {
     public:
         explicit CodeGenerator(std::wostream& output_stream,
-                               std::shared_ptr<coco_to_antlr::Buffer> scanner_buffer);
+                               coco_to_antlr::Buffer* scanner_buffer);
 
         void visit(Production &ast) override;
         void visit(AttrDecl &ast) override;
         void visit(Expression &ast) override;
         void visit(Term &ast) override;
+        //NOTE: we convert `Attribs` with Factor_Sym because we need the context
+        void visit(Factor_Sym& ast) override;
         void visit(Factor_Braced &ast) override;
         void visit(Factor_Optional &ast) override;
         void visit(Factor_Iterate &ast) override;
         void visit(Factor_ANY &ast) override;
         void visit(Resolver &ast) override;
         void visit(Sym &ast) override;
-        void visit(Attribs &ast) override;
         void visit(SemText &ast) override;
 
     private:
@@ -33,7 +34,7 @@ namespace CocoAST {
         int indent_level = 0;
 
         std::wostream& output;
-        std::shared_ptr<coco_to_antlr::Buffer> scanner_buffer;
+        coco_to_antlr::Buffer* scanner_buffer;
 
         /** copy the range [pos_start:pos_end) from scanner to output, obeying copy_mode */
         void copy_verbatim(int pos_start, int pos_end, copy_mode mode);

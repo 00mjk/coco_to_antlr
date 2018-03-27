@@ -1,13 +1,17 @@
 #include "CodeGenerator.h"
 
+#include <utility>
+
 namespace CocoAST {
 
     CodeGenerator::CodeGenerator(std::wostream& output_stream,
-                                 std::shared_ptr<coco_to_antlr::Buffer> scanner_buffer) :
+                                 coco_to_antlr::Buffer* scanner_buffer) :
             CocoAstVisitor(),
             output(output_stream),
             scanner_buffer(scanner_buffer)
-    {}
+    {
+        assert(scanner_buffer);
+    }
 
 
     void CodeGenerator::visit(Production &ast) {
@@ -81,6 +85,67 @@ namespace CocoAST {
         }
     }
 
+    void CodeGenerator::visit(Factor_Sym& ast) {
+        ast.sym.visit(*this);
+
+        if(! ast.attribs)
+            return;
+        if(! convert_instrumentation)
+            return;
+        auto& attribs = *ast.attribs;
+        if(attribs.attributes.empty())
+            return;
+        assert(ast.referenced_rule);
+
+        //TODO: prefix our arguments (from surrounding AttrDecl) with $
+
+        // first, add non-output parameters in []
+        output << "[";
+        bool first = true;
+        size_t i = 0;
+        for (auto &attr : attribs.attributes) {
+            auto& expr = std::get<0>(attr);
+            auto& is_output_parameter = std::get<1>(attr);
+            if (! is_output_parameter) {
+                if (first) {
+                    first = false;
+                    output << "[";
+                } else {
+                    output << ", ";
+                }
+                output << expr;
+            }
+            ++i;
+        }
+        if(!first)
+            output << "]";
+
+        // second, assign output parameters, which are fields of the returned context in ANTLR
+        first = true;
+        i = 0;
+        for (auto &attr : attribs.attributes) {
+            auto& expr = std::get<0>(attr);
+            auto& is_output_parameter = std::get<1>(attr);
+            if (is_output_parameter) {
+                if(first) {
+                    first = false;
+                    output << "\n" << indent() << "{ ";
+                    indent(+1);
+                }
+                auto attr_decl = ast.referenced_rule->attr_decl->attributes.at(i);
+                auto decl_name = std::get<1>(attr_decl);
+                output << expr
+                       << " = $" << ast.sym.name << "." << decl_name
+                       << ";\n" << indent();
+            }
+            ++i;
+        }
+        if(!first) {
+            output << "\n" << indent(-1) << "}";
+        }
+
+    }
+
     void CodeGenerator::visit(Factor_Braced &ast) {
         output << "(\n";
         indent(+1);
@@ -115,32 +180,11 @@ namespace CocoAST {
     }
 
     void CodeGenerator::visit(Sym &ast) {
-        output << "'" << ast.symbol << "'";
-    }
-
-    void CodeGenerator::visit(Attribs &ast) {
-        if(! convert_instrumentation)
-            return;
-        if(ast.attributes.empty())
-            return;
-
-        output << "[";
-        for(bool check_output : {false, true}) {
-            bool first = true;
-            for (auto &attr : ast.attributes) {
-                auto& type = std::get<0>(attr);
-                auto& name = std::get<1>(attr);
-                auto& is_output_parameter = std::get<2>(attr);
-                if (check_output == is_output_parameter) {
-                    if (first) {
-                        first = false;
-                        output << ", ";
-                    }
-                    output << type << " " << name;
-                }
-            }
+        if (ast.literal) {
+            output << "'" << ast.name << "'";
+        } else {
+            output << ast.name;
         }
-        output << "]";
     }
 
     void CodeGenerator::visit(SemText &ast) {

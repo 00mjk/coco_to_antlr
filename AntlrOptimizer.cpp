@@ -4,6 +4,7 @@ namespace CocoAST {
 
     void AntlrOptimizer::visit(Production &ast) {
         if(ast.sem_text) {
+            //TODO: inject only if toplevel alternative
             auto new_factor = new Factor_Braced();
             new_factor->expression = std::move(ast.expression);
 

@@ -39,6 +39,9 @@ Coco/R itself) does not fall under the GNU General Public License.
 #include <unordered_set>
 #include <functional>
 #include "common.h"
+#include "CocoAST.h"
+#include "AntlrOptimizer.h"
+#include "CodeGenerator.h"
 
 COMPILER Coco
 
@@ -51,6 +54,8 @@ bool convert_instrumentation = true;
 std::reference_wrapper<std::wostream> output_stream = std::ref(std::wcout);
 // buffer these sections to output them *after* the parser for ANTLR
 std::wstringstream characters, tokens;
+
+std::list< CocoAST::Production > productions_ast;
 
 output_type current_output = output_type::productions;
 std::wostream& output() {
@@ -186,30 +191,6 @@ std::wstring indent(int increment = 0) {
 }
 
 
-using production_arguments = map<std::wstring, bool>;
-//! helper (code-dedup) for AttrDecl
-void process_single_decl(
-		const std::wstring& decl,
-		const std::wstring& name,
-		const bool is_output_param,
-		std::list<std::wstring>& attr_out,
-		production_arguments& arguments,
-		bool& got_input_param)
-{
-	if(is_output_param) {
-		attr_out.push_back(decl);
-	} else {
-		if(! got_input_param) {
-			got_input_param = true;
-			if(convert_instrumentation)
-				output() << "[";
-		}
-		if(convert_instrumentation)
-			output() << decl;
-	}
-	arguments.insert({name, is_output_param});
-};
-
 CHARACTERS
     letter    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_".
     digit     = "0123456789".
@@ -318,7 +299,12 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                    output() << "\n\n";
                                 .)
   "PRODUCTIONS"                 (. output() << "// PRODUCTIONS from line " << std::to_wstring(t->line) << '\n'; .)
-  { Production }
+  {                             (. CocoAST::Production node; .)
+    Production<node>            (. productions_ast.emplace_back(std::move(node)); .)
+  }
+                                (. CocoAST::AntlrOptimizer().accept(productions_ast);
+                                   CocoAST::CodeGenerator(output(), scanner->buffer).accept(productions_ast);
+                                .)
   "END" ident                   (. output() << "\n\n" << tokens.str()
                                             << "\n\n" << characters.str();
                                 .)
@@ -327,19 +313,21 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
 .
 
 
-Production
-=                               (. production_arguments our_arguments; .)
-    ident                       (. output() << define_name(name_type::production, std::wstring(t->val)); .)
-    [ AttrDecl<our_arguments> ]
-                                (. output() << ":\n";
-                                   indent(+1);
-                                .)
-    [                           (. output() << indent(); .)
-      SemText<our_arguments>    (. output() << '\n'; .) //FIXME: if top-level expression is an alternative-list, this code ends up only in the first alternative
+Production<CocoAST::Production& node>
+=
+    ident
+    (. node.name = std::wstring(t->val); .)
+    [
+      (. node.attr_decl.reset(new CocoAST::AttrDecl()); .)
+      AttrDecl<*node.attr_decl>
+    ]
+    [
+      (. node.sem_text.reset(new CocoAST::SemText()); .)
+      SemText<*node.sem_text>
     ]
     WEAK '='
-    Expression<our_arguments>   (. output() << '\n' << indent(-1) << ";\n"; .)
-    WEAK '.'                    (. output() << '\n'; .)
+    Expression<node.expression>
+    WEAK '.'
 .
 
 
@@ -387,8 +375,8 @@ SimSet
                                    output() << '[' << chars << ']';
                                 .)
 |                               (. std::wstring name; .)
-  Char<name>                    (. output() << name; .)
-  [ ".." Char<name>             (. output() << ".." << name; .)
+  Char<name>                    (. output() << "'" << name << "'"; .)
+  [ ".." Char<name>             (. output() << "..'" << name << "'"; .)
   ]
 | "ANY"                         (. output() << '.'; .)
 )
@@ -398,6 +386,7 @@ Char<std::wstring& name>
 =
     char                        (. name = std::wstring(t->val);
 
+                                   name = name.substr(1, name.length() -2); // remove ''
                                    size_t pos = -2;
                                    while (pos = name.find(L'\\', pos+2)) {
                                        if(pos == std::wstring::npos)
@@ -406,6 +395,7 @@ Char<std::wstring& name>
                                        const auto& escaped = name[pos+1];
                                        if (coco_and_antlr_escaped_chars.find(escaped) == std::wstring::npos) {
                                            // some non-common escape char
+                                           //FIXME: name does not necessarily go to output()
                                            output() << "/*" C2A_TODO "escaped character, check meaning: */";
                                            break;
                                        }
@@ -417,6 +407,7 @@ String<std::wstring& name>
 =   string                      (. name = std::wstring(t->val);
                                    name = name.substr(1, name.length() -2); // remove ""
                                    if(name.find(L'\\') != std::wstring::npos)
+                                       //FIXME: name does not necessarily go to output()
                                        output() << "/*" C2A_TODO "escaped characters in string, check meaning: */ ";
                                    for(auto pos = name.find(L'\'');
                                        pos != std::wstring::npos;
@@ -429,16 +420,17 @@ String<std::wstring& name>
 
 /*------------------------------------------------------------------------------------*/
 
-TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
+TokenDecl<std::wstring channel>
 =
-  Sym<name, is_literal>
-                                (. if(is_literal) {
+  (. CocoAST::Sym sym_node; .)
+  Sym<sym_node>
+                                (. if(sym_node.literal) {
                                        // raw string or char token, coco has no name for it
                                        output() << "LITERAL_" << std::to_wstring(literal_token_index)
-                                              << ':' << name;
+                                              << ":'" << sym_node.name << "'";
                                        ++literal_token_index;
                                    } else {
-                                       output() << define_name(name_type::token, name) << ':';
+                                       output() << define_name(name_type::token, sym_node.name) << ':';
                                    }
                                 .)
   SYNC                          (. output() << '\n';
@@ -449,8 +441,11 @@ TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
   ( '=' TokenExpr '.'
   |                             (. output() << " //" C2A_TODO "named token without body from Coco\n"; .)
   )
-  [                             (. output() << '\n' << indent(); .)
-    SemText<. production_arguments() .>
+  [                             (. output() << '\n' << indent(); CocoAST::SemText node; .)
+    SemText<node>
+    (.  output() << "{ ";
+        copy_verbatim(output(), node.pos_start, node.pos_end, copy_mode::replace);
+    .)
   ]
                                 (. if(! channel.empty()) {
                                        output() << '\n' << indent() << ')';
@@ -472,39 +467,33 @@ TokenDecl<std::wstring channel> (. std::wstring name; bool is_literal; .)
  * //TODO: only C++ supported yet, Java C# etc have other syntax ("out" parameter)
  * //TODO: parameter names may conflict with rule names
  */
-AttrDecl<. production_arguments& arguments .>
+AttrDecl<CocoAST::AttrDecl& node>
 =                               (. std::wstring decl, name;
-                                   std::list<std::wstring> attr_out;
-                                   bool is_output_param,  got_input_param = false;
+                                   bool is_output_param;
                                 .)
 //TODO: may be empty <braces>
 	(
 		'<'
-		SingleAttrDecl<decl, name, is_output_param>
-	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
-		{ ',' SingleAttrDecl<decl, name, is_output_param>
-	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
-		}
+		[
+			SingleAttrDecl<decl, name, is_output_param>
+	        (. node.attributes.emplace_back(decl, name, is_output_param); .)
+			{ ',' SingleAttrDecl<decl, name, is_output_param>
+	            (. node.attributes.emplace_back(decl, name, is_output_param); .)
+			}
+		]
 		'>'
 	|   "<."
-		SingleAttrDecl_alt<decl, name, is_output_param>
-	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
-		{ ',' SingleAttrDecl_alt<decl, name, is_output_param>
-	                            (. process_single_decl(decl, name, is_output_param, attr_out, arguments, got_input_param); .)
-		}
+		[
+			SingleAttrDecl_alt<decl, name, is_output_param>
+	        (. node.attributes.emplace_back(decl, name, is_output_param); .)
+			{ ',' SingleAttrDecl_alt<decl, name, is_output_param>
+	            (. node.attributes.emplace_back(decl, name, is_output_param); .)
+			}
+		]
 		".>"
 	)
-                               (. if(convert_instrumentation && got_input_param) output() << "]";
-                                  if(convert_instrumentation && ! attr_out.empty() ) {
-                                      output() << indent() << " returns[";
-                                      bool is_first = true;
-                                      for(auto& decl : attr_out) {
-                                          output() << (is_first? "" : ", ")
-                                                   << decl;
-                                          is_first = false;
-                                      }
-                                      output() << "]";
-                                  }
+                               (.
+
                                .)
 .
 
@@ -547,6 +536,7 @@ CppTypeSpec<int& pos_end, bool& is_output_param>
 	[   '<' CppTypeSpec<dummy_i, dummy_b>
 		{ ',' CppTypeSpec<dummy_i, dummy_b> } '>'
 	]
+	[ "*" ]
 	[ "const" ]                 (. pos_end = la->pos; .)
 	[ "&"                       (. is_output_param = true; .)
 	]
@@ -554,81 +544,74 @@ CppTypeSpec<int& pos_end, bool& is_output_param>
 
 /*------------------------------------------------------------------------------------*/
 
-Expression<. const production_arguments& local_arguments.>
-=                               (. output() << indent(); .)
-  Term<local_arguments>
-  { WEAK '|'                    (. output() << '\n' << indent(-1) << "|\t";
-                                   indent(+1);
-                                .)
-    Term<local_arguments>
+Expression<CocoAST::Expression& node>
+=
+  (. CocoAST::Term first; .)
+  Term<first>
+  (. node.terms.push_back(std::move(first)); .)
+  {
+    (. CocoAST::Term next; .)
+    WEAK '|'
+    Term<next>
+    (. node.terms.push_back(std::move(first)); .)
   }
 .
 
-Term<.const production_arguments& local_arguments.>
+Term<CocoAST::Term& node>
 =
-(   [ Resolver ]
-    Factor<local_arguments>
-    {                           (. output() << '\n' << indent(); .)
-        Factor<local_arguments>
+(   [
+        (. node.resolver.reset(new CocoAST::Resolver()); .)
+        Resolver<*node.resolver>
+    ]
+    (. node.factors.emplace_back(); .)
+    Factor<node.factors.back()>
+    {
+        (. node.factors.emplace_back(); .)
+        Factor<node.factors.back()>
     }
 |
 )
 .
 
 //TODO: comments are output earlier than correct
-Factor<.const production_arguments& local_arguments.>
+Factor<. std::unique_ptr<CocoAST::Factor>& node_ptr .>
 =
-  [ "WEAK" ]                    (. std::wstring name; bool is_literal; .)
-  Sym<name, is_literal>
-                                (. if(is_literal) {
-                                       output() << name;
-                                   } else {
-                                       if(token_names.contains_key(name)) {
-                                           output() << token_names.at(name);
-                                       } else {
-                                           if(! production_names.contains_key(name)) {
-                                               SemErr(std::wstring(L"name not defined yet: " + name).c_str()); // actually a warning only
-                                           }
-                                           output() << define_name(name_type::production, name);
-                                       }
-                                   }
-                                 .)
-  [ Attribs<local_arguments> ]
+(
+	[ "WEAK" ]
+	(. auto node = new CocoAST::Factor_Sym(); node_ptr.reset(node); .)
+	Sym<. node->sym .>
+	[
+		(. node->attribs.reset(new CocoAST::Attribs()); .)
+		Attribs<. *node->attribs .>
+	]
 
-//TODO: only output braces around these 3 subrules when Expression is not a single Sym
-| '('                           (. output() << "(\n"; indent(+1); .)
-   Expression<local_arguments> ')'  (. output() << '\n' << indent(-1) << ')'; .)
-| '['                           (. output() << "(\n"; indent(+1); .)
-   Expression<local_arguments> ']'  (. output() << '\n' << indent(-1) << ")?"; .)
-| '{'                           (. output() << "(\n"; indent(+1); .)
-   Expression<local_arguments> '}'  (. output() << '\n' << indent(-1) << ")*"; .)
-| SemText<local_arguments>
-| "ANY"                         (. output() << '.';
-                                   if(current_output == output_type::productions)
-                                       output() << " /*" C2A_TODO "implement Coco ANY in ANTLR lexer, not possible in parser */\n"; .)
-| "SYNC"
+| '('                           (. auto node = new CocoAST::Factor_Braced(); node_ptr.reset(node); .)
+	Expression<. node->expression .> ')'
+| '['                           (. auto node = new CocoAST::Factor_Optional(); node_ptr.reset(node); .)
+	Expression<. node->expression .> ']'
+| '{'                           (. auto node = new CocoAST::Factor_Iterate(); node_ptr.reset(node); .)
+	Expression<. node->expression .> '}'
+|   (. auto node = new CocoAST::Factor_SemText(); node_ptr.reset(node); .)
+	SemText<. node->semText .>
+| "ANY"                         (. node_ptr.reset(new CocoAST::Factor_ANY()); .)
+| "SYNC"                        (. node_ptr.reset(new CocoAST::Factor_SYNC()); .)
+)
 .
 
 /*------------------------------------------------------------------------------------*/
 
-Resolver
+Resolver<CocoAST::Resolver& node>
 =
-  "IF" "("                       (. auto pos_start = la->pos; int end_pos;
-                                    if(convert_instrumentation)
-                                        output() << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
+  "IF" "("                       (. node.pos_start = la->pos;
                                     in_verbatim = true;
                                  .)
-  Condition<end_pos>             (. if(convert_instrumentation) {
-                                        copy_verbatim(output(), pos_start, end_pos, copy_mode::replace);
-                                        output() << "\n*/\n" << indent();
-                                    }
-                                    in_verbatim = false;
-                                 .)
+  Condition<node.pos_end>        (. in_verbatim = false; .)
 .
 
 Condition<int& end_pos>
-= { "(" Condition<end_pos> | ANY } ")"
-                                (. end_pos = t->pos + 1; .)
+=
+	{ "(" Condition<end_pos> | ANY } ")"
+	(. end_pos = t->pos + 1; .)
 .
 
 /*------------------------------------------------------------------------------------*/
@@ -656,23 +639,24 @@ TokenTerm
   ]
 .
 
-TokenFactor                     (. std::wstring name; bool is_literal; .)
+TokenFactor                     (. bool is_literal; .)
 =
-  Sym<name, is_literal>
-                                (. if(is_literal) {
-                                       output() << name;
+  (. CocoAST::Sym sym_node; .)
+  Sym<sym_node>
+                                (. if(sym_node.literal) {
+                                       output() << "'" << sym_node.name << "'";
                                    } else {
-                                       if (! charset_names.contains_key(name)) {
+                                       if (! charset_names.contains_key(sym_node.name)) {
                                            SemErr(std::wstring(L"Character Class used but not defined: "
-                                                               + name).c_str());
-                                           output() << name;
+                                                               + sym_node.name).c_str());
+                                           output() << sym_node.name;
                                        } else {
-                                           output() << charset_names.at(name);
+                                           output() << charset_names.at(sym_node.name);
                                        }
                                    }
                                 .)
 
-//TODO: only output braces around these 3 subrules when TokenExpr is not a single Sym
+//TODO: only output braces around these 3 subrules when TokenExpr is not a single Sym. see CocoAST::AntlrOptimizer
 | '('                           (. output() << "(\n"; indent(+1); .)
     TokenExpr ')'               (. output() << '\n' << indent(-1) << ')'; .)
 | '['                           (. output() << "(\n"; indent(+1); .)
@@ -683,15 +667,13 @@ TokenFactor                     (. std::wstring name; bool is_literal; .)
 
 /*------------------------------------------------------------------------------------*/
 
-Sym<std::wstring& name, bool& is_literal>
+Sym<CocoAST::Sym& node>
 =
-( ident                         (. name = std::wstring(t->val);
-                                   is_literal = false;
+( ident                         (. node.name = std::wstring(t->val);
+                                   node.literal = false;
                                 .)
-| String<name>                  (. name = L"'" + name + L"'";
-                                   is_literal = true;
-                                .)
-| Char<name>                    (. is_literal = true; .)
+| String<node.name>             (. node.literal = true; .)
+| Char<node.name>               (. node.literal = true; .)
 )
 .
 
@@ -705,29 +687,19 @@ Sym<std::wstring& name, bool& is_literal>
  *
  * //TODO: only C++ supported yet, Java C# etc have other syntax ("out" parameter)
  */
-Attribs<. const production_arguments& local_arguments .>
+Attribs<CocoAST::Attribs& node>
 =
-//XXX: replace any text in local_arguments by $text
-//XXX: remove output parameters from rule invocation
-  '<'                           (. auto pos_start = la->pos;
-                                   if(convert_instrumentation) output() << '[';
+  '<'                           (. node.pos_start = la->pos;
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. if(convert_instrumentation) {
-                                       copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
-                                       output() << ']';
-                                   }
+  { ANY | badString }           (. node.pos_end = la->pos;
                                    in_verbatim = false;
                                 .)
   '>'
-| "<."                          (. auto pos_start = la->pos;
-                                   if(convert_instrumentation) output() << '[';
+| "<."                          (. node.pos_start = la->pos;
                                    in_verbatim = true;
                                 .)
-  { ANY | badString }           (. if(convert_instrumentation) {
-                                       copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
-                                       output() << ']';
-                                   }
+  { ANY | badString }           (. node.pos_end = la->pos;
                                    in_verbatim = false;
                                 .)
   ".>"
@@ -735,21 +707,18 @@ Attribs<. const production_arguments& local_arguments .>
 
 //TODO: variables/anything containing $ allowed in Coco, fails ANTLR
 //XXX: replace output parameter names by $name =
-SemText<. const production_arguments& local_arguments .>
+SemText<CocoAST::SemText& node>
 =
-  "(."                          (. auto pos_start = la->pos;
-                                   in_verbatim = true;
-                                .)
-  { ANY | badString | "(." }
+	"(."
+	(. node.pos_start = la->pos;
+	   in_verbatim = true;
+	.)
+	{ ANY | badString | "(." }
 
-  (. in_verbatim = false;
-     if(convert_instrumentation) {
-	     output() << "{ ";
-	     copy_verbatim(output(), pos_start, la->pos, copy_mode::replace);
-	     output() << " }";
-	 }
-  .)
-  ".)"
+	(. in_verbatim = false;
+	   node.pos_end = la->pos;
+	.)
+	".)"
 .
 
 END Coco.

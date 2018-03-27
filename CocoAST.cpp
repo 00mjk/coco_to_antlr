@@ -24,6 +24,8 @@ namespace CocoAST {
 
     void Factor_ANY::visit(CocoAstVisitor &visitor) { visitor.visit(*this); }
 
+    void Factor_SYNC::visit(CocoAstVisitor &visitor) { visitor.visit(*this); }
+
     void Resolver::visit(CocoAstVisitor &visitor) { visitor.visit(*this); }
 
     void Sym::visit(CocoAstVisitor &visitor) { visitor.visit(*this); }
@@ -31,5 +33,4 @@ namespace CocoAST {
     void Attribs::visit(CocoAstVisitor &visitor) { visitor.visit(*this); }
 
     void SemText::visit(CocoAstVisitor &visitor) { visitor.visit(*this); }
-
 }
