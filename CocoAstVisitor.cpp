@@ -1,4 +1,6 @@
 #include "CocoAstVisitor.h"
+#include <cassert>
+
 
 namespace CocoAST {
 
@@ -22,8 +24,10 @@ namespace CocoAST {
     void CocoAstVisitor::visit(Term &ast) {
         if(ast.resolver)
             ast.resolver->visit(*this);
-        for(auto& factor : ast.factors)
-            factor.visit(*this);
+        for(auto& factor : ast.factors) {
+            assert(factor);
+            factor->visit(*this);
+        }
     }
 
     void CocoAstVisitor::visit(Factor_Sym &ast) {

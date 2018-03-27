@@ -33,6 +33,9 @@ public:
 };
 
 
+/** what to do with references to parser context, especially the current token `t->` */
+enum class copy_mode { copy, warn, replace };
+
 enum class name_type { charset, token, production };
 enum class output_type { charsets, tokens, productions };
 

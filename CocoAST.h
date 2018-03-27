@@ -49,7 +49,8 @@ namespace CocoAST {
     struct Term : CocoAST  {
         void visit(CocoAstVisitor &visitor) override;;
         unique_ptr<Resolver> resolver;
-        std::vector<Factor> factors;
+        //! the pointers shall never be null (needed only for polymorphism)
+        std::vector< unique_ptr<Factor> > factors;
     };
 
     struct Factor : CocoAST {};
@@ -91,7 +92,8 @@ namespace CocoAST {
     struct Attribs : CocoAST  {
         void visit(CocoAstVisitor &visitor) override;
 
-        std::vector<wstring> attributes;
+        //! vector of (type, name, is_output_parameter)
+        std::vector< std::tuple<wstring, wstring, bool> > attributes;
     };
 
     struct Production : CocoAST {

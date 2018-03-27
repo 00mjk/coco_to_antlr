@@ -64,9 +64,6 @@ std::wostream& output() {
     }
 }
 
-/** what to do with references to parser context, especially the current token `t->` */
-enum class copy_mode { copy, warn, replace };
-
 /** copy the range [pos_start:pos_end) from scanner to output, obeying copy_mode */
 void copy_verbatim(std::wostream& output, int pos_start, int pos_end, copy_mode mode = copy_mode::copy) {
     const wchar_t* attr = scanner->buffer->GetString(pos_start, pos_end);
