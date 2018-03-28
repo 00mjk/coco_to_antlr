@@ -22,7 +22,7 @@ namespace CocoAST {
         virtual void visit(CocoAstVisitor &visitor) = 0;
 
         //TODO: append comments to "currently building" ast
-        //XXX: fill pos_start, pos_end in .atg
+        //TODO: fill pos_start, pos_end in .atg for *all* nodes
         int pos_start, pos_end;
     };
 

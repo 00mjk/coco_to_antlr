@@ -16,8 +16,10 @@ namespace CocoAST {
 
     void CodeGenerator::visit(Production &ast) {
         output << ast.antlr_name;
+        current_scope_attr_regex = std::wregex();
         if(ast.attr_decl) {
             ast.attr_decl->visit(*this);
+            build_scope_attr_regex(*ast.attr_decl);
         }
         output << ":\n";
         indent(+1);
@@ -29,6 +31,7 @@ namespace CocoAST {
         ast.expression.visit(*this);
         output << "\n" << indent(-1) << ";\n";
         output << "\n";
+        current_scope_attr_regex = std::wregex();
     }
 
     void CodeGenerator::visit(AttrDecl &ast) {
@@ -125,7 +128,7 @@ namespace CocoAST {
 
         // second, assign output parameters, which are fields of the returned context in ANTLR
         first = true;
-        bool second = false; // false iff we output exactly one parameter: then } will be on the same line
+        bool second = false; // false iff we output exactly one parameter, so we can put } on the same line
         i = 0;
         for (auto &attr : attribs.attributes) {
             auto& expr = std::get<0>(attr);
@@ -139,9 +142,10 @@ namespace CocoAST {
                     second = true;
                     output << "\n" << indent();
                 }
-                auto attr_decl = ast.referenced_rule->attr_decl->attributes.at(i);
-                auto decl_name = std::get<1>(attr_decl);
-                output << expr << " = $" << ast.sym.antlr_name << "." << decl_name << ";";
+                auto& attr_decl = ast.referenced_rule->attr_decl->attributes.at(i);
+                auto& decl_name = std::get<1>(attr_decl);
+                output << replace_current_scope_attr(expr)
+                       << " = $" << ast.sym.antlr_name << "." << decl_name << ";";
             }
             ++i;
         }
@@ -185,7 +189,7 @@ namespace CocoAST {
             return;
 
         output << "/* " C2A_TODO "IF() conflict resolver from Coco, check ANTLR code:\n";
-        copy_verbatim(ast.pos_start, ast.pos_end, copy_mode::replace);
+        copy_verbatim(output, ast.pos_start, ast.pos_end, copy_mode::replace);
         output << "\n*/\n" << indent();
     }
 
@@ -202,7 +206,9 @@ namespace CocoAST {
             return;
 
         output << "{ ";
-        copy_verbatim(ast.pos_start, ast.pos_end, copy_mode::replace);
+        std::wostringstream stream;
+        copy_verbatim(stream, ast.pos_start, ast.pos_end, copy_mode::replace);
+        output << replace_current_scope_attr(stream.str());
         output << " }";
     }
 
@@ -213,7 +219,7 @@ namespace CocoAST {
         return std::wstring(indent_level, '\t');
     }
 
-    void CodeGenerator::copy_verbatim(int pos_start, int pos_end, copy_mode mode) {
+    void CodeGenerator::copy_verbatim(std::wostream& output, int pos_start, int pos_end, copy_mode mode) {
         const wchar_t* attr = scanner_buffer->GetString(pos_start, pos_end);
         switch(mode) {
             case copy_mode::copy:
@@ -245,5 +251,29 @@ namespace CocoAST {
                 break;
             }
         }
+    }
+
+    std::wstring CodeGenerator::replace_current_scope_attr(const wstring &expr) {
+        return std::regex_replace(expr.c_str(),
+                                  current_scope_attr_regex,
+                                      // $` means characters before the match
+                                  L"$$$&"  // $& means the matched characters
+                                  );  // $' means characters following the match);
+    }
+
+    void CodeGenerator::build_scope_attr_regex(const AttrDecl &attr_decl) {
+        std::wostringstream builder(L"\\b(", std::ios::ate);
+        bool first = true;
+        for(const auto& attr : attr_decl.attributes) {
+            auto& name = std::get<1>(attr);
+            if(first) {
+                first = false;
+            } else {
+                builder << L"|";
+            }
+            builder << name;
+        }
+        builder << L")\\b";
+        current_scope_attr_regex = builder.str();
     }
 }

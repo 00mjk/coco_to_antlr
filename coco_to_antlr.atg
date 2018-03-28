@@ -707,7 +707,6 @@ Attribs<CocoAST::Attribs& node>
 .
 
 //TODO: variables/anything containing $ allowed in Coco, fails ANTLR
-//XXX: replace output parameter names by $name =
 SemText<CocoAST::SemText& node>
 =
 	"(."

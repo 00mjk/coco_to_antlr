@@ -3,13 +3,14 @@
 
 #include <ostream>
 #include <cassert>
+#include <set>
 #include "common.h"
 #include "CocoAstVisitor.h"
 #include "Scanner.h"
 
 namespace CocoAST {
 
-    //FIXME: comments can be everywhere
+    //FIXME: comments can be everywhere, check getHiddenTokensToLeft() <https://stackoverflow.com/a/37252830>
     class CodeGenerator : public CocoAstVisitor {
     public:
         explicit CodeGenerator(std::wostream& output_stream,
@@ -36,14 +37,21 @@ namespace CocoAST {
         std::wostream& output;
         coco_to_antlr::Buffer* scanner_buffer;
 
-        /** copy the range [pos_start:pos_end) from scanner to output, obeying copy_mode */
-        void copy_verbatim(int pos_start, int pos_end, copy_mode mode);
+        /** copy the range [pos_start:pos_end) from scanner to os, obeying copy_mode */
+        void copy_verbatim(std::wostream& output, int pos_start, int pos_end, copy_mode mode);
 
         /**
          * adjust current indent_level by @param increment (positive or negative).
          * @return whitespaces for current/new indentation level
          */
         std::wstring indent(int increment = 0);
+
+        /*! in expr, prefix names from current_scope_attrdecl with $
+         * TODO: a less hackish approach, probably in a (separate?) visitor
+         */
+        std::wstring replace_current_scope_attr(const std::wstring& expr);
+        std::wregex current_scope_attr_regex;
+        void build_scope_attr_regex(const AttrDecl& attr_decl);
     };
 }
 

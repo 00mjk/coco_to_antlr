@@ -52,7 +52,7 @@ const std::wregex token_object_regex(L"t\\s*->\\s*((kind)|(val)|(pos)|(charPos)|
 /** Specifies how to map above references to ANTLR.
  * See https://github.com/antlr/antlr4/blob/master/doc/actions.md#token-attributes and the Coco User Manual
  */
-//FIXME: $stop "attribute is available only to the after and finally actions". instead, remember last token/rule name and insert $name instead of "$stop"
+//FIXME: $stop "attribute is available only to the after and finally actions". instead, remember last token/rule name and insert $name instead of "$stop". this is now easy with the AST
 const std::unordered_map<size_t, std::wstring> token_object_replace_map = {
         {2, L"$ctx.stop.type"},  // token type/kind
         {3, L"$ctx.stop.text"},  // token value
