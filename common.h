@@ -19,15 +19,19 @@ public:
         backward.insert({value, key});
     }
 
-    bool contains_key(const Key& key) {
+    bool contains_key(const Key& key) const {
         return forward.find(key) != forward.end();
     }
 
-    bool contains_value(const Value& value) {
+    bool contains_value(const Value& value) const {
         return backward.find(value) != backward.end();
     }
 
     Value& at(const Key& key) {
+        return forward.at(key);
+    }
+
+    const Value& at(const Key& key) const {
         return forward.at(key);
     }
 };
@@ -36,7 +40,7 @@ public:
 /** what to do with references to parser context, especially the current token `t->` */
 enum class copy_mode { copy, warn, replace };
 
-enum class name_type { charset, token, production };
+enum class name_type { charset, token, /* production */ };
 enum class output_type { charsets, tokens, productions };
 
 const std::wstring coco_and_antlr_escaped_chars = L"nrbtf'\\";

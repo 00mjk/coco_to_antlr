@@ -35,6 +35,7 @@ namespace CocoAST {
 
         bool literal;
         wstring name;
+        wstring antlr_name;
     };
 
     struct AttrDecl : CocoAST  {
@@ -108,6 +109,7 @@ namespace CocoAST {
     struct Production : CocoAST {
         void visit(CocoAstVisitor &visitor) override;
         wstring name;
+        wstring antlr_name;
         unique_ptr<AttrDecl> attr_decl;
         unique_ptr<SemText> sem_text;
         Expression expression;

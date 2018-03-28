@@ -39,9 +39,7 @@ Coco/R itself) does not fall under the GNU General Public License.
 #include <unordered_set>
 #include <functional>
 #include "common.h"
-#include "CocoAST.h"
-#include "AntlrOptimizer.h"
-#include "CodeGenerator.h"
+#include "CocoAstMain.h"
 
 COMPILER Coco
 
@@ -113,8 +111,6 @@ bool in_verbatim = true;
 UBiMap<std::wstring, std::wstring> charset_names;
 // maps from coco token names to their uppercase-variant as used for ANTLR
 UBiMap<std::wstring, std::wstring> token_names;
-// maps from coco production rule names to their uppercase-variant as used for ANTLR
-UBiMap<std::wstring, std::wstring> production_names;
 
 //maps from coco production rules to their arguments, telling if they are extracted output parameters (see AttrDecl)
 std::unordered_map<std::wstring, std::vector<bool>> production_output_arguments;
@@ -156,22 +152,6 @@ std::wstring define_name(name_type in_section, const std::wstring& coco_name) {
                     ++i;
                 }
                 token_names.insert(coco_name, antlr_name);
-                return antlr_name;
-            }
-        case name_type::production:
-            if(production_names.contains_key(coco_name)) {
-                return production_names.at(coco_name);
-            } else {
-                auto antlr_name_raw = coco_name.substr(coco_name.find_first_not_of(L'_'));
-                antlr_name_raw[0] = std::tolower((unsigned char) antlr_name_raw[0]);
-                auto antlr_name = antlr_name_raw;
-                size_t i = 2;
-                while (production_names.contains_value(antlr_name)
-                       || token_names.contains_value(antlr_name)) {
-                    antlr_name = antlr_name_raw + L"_" + std::to_wstring(i);
-                    ++i;
-                }
-                production_names.insert(coco_name, antlr_name);
                 return antlr_name;
             }
     }
@@ -220,9 +200,13 @@ PRAGMAS
                 }.
 
     comment1 = "/*" {'/' | other | '*' {'*'} other} '*' {'*'} '/'. //TODO: NESTED comments not supported!
-        (. if(!in_verbatim) output() << la->val << '\n'; .)
+        (. if(!in_verbatim && current_output != output_type::productions)
+               output() << la->val << '\n';
+        .)
     comment2 = "//" { no_lf } lf.
-        (. if(!in_verbatim) output() << la->val << '\n'; .)
+        (. if(!in_verbatim && current_output != output_type::productions)
+               output() << la->val << '\n';
+        .)
 
 IGNORE cr + lf + tab
 
@@ -302,9 +286,7 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
   {                             (. CocoAST::Production node; .)
     Production<node>            (. productions_ast.emplace_back(std::move(node)); .)
   }
-                                (. CocoAST::AntlrOptimizer().accept(productions_ast);
-                                   CocoAST::CodeGenerator(output(), scanner->buffer).accept(productions_ast);
-                                .)
+                                (. generate_antlr_code(output(), scanner->buffer, token_names, productions_ast); .)
   "END" ident                   (. output() << "\n\n" << tokens.str()
                                             << "\n\n" << characters.str();
                                 .)
@@ -318,11 +300,11 @@ Production<CocoAST::Production& node>
     ident
     (. node.name = std::wstring(t->val); .)
     [
-      (. node.attr_decl.reset(new CocoAST::AttrDecl()); .)
+      (. node.attr_decl = std::make_unique<CocoAST::AttrDecl>(); .)
       AttrDecl<*node.attr_decl>
     ]
     [
-      (. node.sem_text.reset(new CocoAST::SemText()); .)
+      (. node.sem_text = std::make_unique<CocoAST::SemText>(); .)
       SemText<*node.sem_text>
     ]
     WEAK '='
@@ -445,6 +427,7 @@ TokenDecl<std::wstring channel>
     SemText<node>
     (.  output() << "{ ";
         copy_verbatim(output(), node.pos_start, node.pos_end, copy_mode::replace);
+        output() << " }";
     .)
   ]
                                 (. if(! channel.empty()) {
@@ -492,9 +475,6 @@ AttrDecl<CocoAST::AttrDecl& node>
 		]
 		".>"
 	)
-                               (.
-
-                               .)
 .
 
 SingleAttrDecl<std::wstring& decl, std::wstring& name, bool& is_output_param>
@@ -507,7 +487,7 @@ SingleAttrDecl<std::wstring& decl, std::wstring& name, bool& is_output_param>
                                    copy_verbatim(decl_stream, pos_start, pos_end);
                                 .)
     ident                       (. name = t->val;
-                                   decl = decl_stream.str() + L" " + name;
+                                   decl = decl_stream.str();
                                 .)
 .
 
@@ -522,7 +502,7 @@ SingleAttrDecl_alt<std::wstring& decl, std::wstring& name, bool& is_output_param
                                    copy_verbatim(decl_stream, pos_start, pos_end);
                                 .)
     ident                       (. name = t->val;
-                                   decl = decl_stream.str() + L" " + name;
+                                   decl = decl_stream.str();
                                 .)
 .
 
@@ -553,14 +533,14 @@ Expression<CocoAST::Expression& node>
     (. CocoAST::Term next; .)
     WEAK '|'
     Term<next>
-    (. node.terms.push_back(std::move(first)); .)
+    (. node.terms.push_back(std::move(next)); .)
   }
 .
 
 Term<CocoAST::Term& node>
 =
 (   [
-        (. node.resolver.reset(new CocoAST::Resolver()); .)
+        (. node.resolver = std::make_unique<CocoAST::Resolver>(); .)
         Resolver<*node.resolver>
     ]
     (. node.factors.emplace_back(); .)
@@ -581,7 +561,7 @@ Factor<. std::unique_ptr<CocoAST::Factor>& node_ptr .>
 	(. auto node = new CocoAST::Factor_Sym(); node_ptr.reset(node); .)
 	Sym<. node->sym .>
 	[
-		(. node->attribs.reset(new CocoAST::Attribs()); .)
+		(. node->attribs = std::make_unique<CocoAST::Attribs>(); .)
 		Attribs<. *node->attribs .>
 	]
 
@@ -593,8 +573,8 @@ Factor<. std::unique_ptr<CocoAST::Factor>& node_ptr .>
 	Expression<. node->expression .> '}'
 |   (. auto node = new CocoAST::Factor_SemText(); node_ptr.reset(node); .)
 	SemText<. node->semText .>
-| "ANY"                         (. node_ptr.reset(new CocoAST::Factor_ANY()); .)
-| "SYNC"                        (. node_ptr.reset(new CocoAST::Factor_SYNC()); .)
+| "ANY"                         (. node_ptr = std::make_unique<CocoAST::Factor_ANY>(); .)
+| "SYNC"                        (. node_ptr = std::make_unique<CocoAST::Factor_SYNC>(); .)
 )
 .
 
@@ -689,20 +669,41 @@ Sym<CocoAST::Sym& node>
  */
 Attribs<CocoAST::Attribs& node>
 =
-  '<'                           (. node.pos_start = la->pos;
-                                   in_verbatim = true;
-                                .)
-  { ANY | badString }           (. node.pos_end = la->pos;
-                                   in_verbatim = false;
-                                .)
-  '>'
-| "<."                          (. node.pos_start = la->pos;
-                                   in_verbatim = true;
-                                .)
-  { ANY | badString }           (. node.pos_end = la->pos;
-                                   in_verbatim = false;
-                                .)
-  ".>"
+//TODO: may be empty <braces>
+	(
+		'<'
+		[
+			(. auto pos_start = la->pos; .)
+			ANY{ANY}
+			(. std::wostringstream expr;
+			   copy_verbatim(expr, pos_start, la->pos);
+			   node.attributes.emplace_back(expr.str(), false /* will be set in CocoAST::SymbolResolver */ ); .)
+			{ ','
+				(. auto pos_start = la->pos; .)
+				ANY{ANY}
+				(. std::wostringstream expr;
+				   copy_verbatim(expr, pos_start, la->pos);
+				   node.attributes.emplace_back(expr.str(), false /* will be set in CocoAST::SymbolResolver */ ); .)
+			}
+		]
+		'>'
+	|   "<."
+		[
+			(. auto pos_start = la->pos; .)
+			ANY{ANY}
+			(. std::wostringstream expr;
+			   copy_verbatim(expr, pos_start, la->pos);
+			   node.attributes.emplace_back(expr.str(), false /* will be set in CocoAST::SymbolResolver */ ); .)
+			{ ','
+				(. auto pos_start = la->pos; .)
+				ANY{ANY}
+				(. std::wostringstream expr;
+				   copy_verbatim(expr, pos_start, la->pos);
+				   node.attributes.emplace_back(expr.str(), false /* will be set in CocoAST::SymbolResolver */ ); .)
+			}
+		]
+		".>"
+	)
 .
 
 //TODO: variables/anything containing $ allowed in Coco, fails ANTLR

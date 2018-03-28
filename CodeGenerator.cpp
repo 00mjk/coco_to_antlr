@@ -15,7 +15,7 @@ namespace CocoAST {
 
 
     void CodeGenerator::visit(Production &ast) {
-        output << ast.name;
+        output << ast.antlr_name;
         if(ast.attr_decl) {
             ast.attr_decl->visit(*this);
         }
@@ -37,23 +37,27 @@ namespace CocoAST {
         if(ast.attributes.empty())
             return;
 
-        output << "[";
         for(bool check_output : {false, true}) {
             bool first = true;
             for (auto &attr : ast.attributes) {
                 auto& type = std::get<0>(attr);
                 auto& name = std::get<1>(attr);
-                auto& is_output_parameter = std::get<2>(attr);
+                auto& is_output_parameter = std::get<bool>(attr);
                 if (check_output == is_output_parameter) {
                     if (first) {
                         first = false;
+                        if(check_output)
+                            output << " returns";
+                        output << "[";
+                    } else {
                         output << ", ";
                     }
                     output << type << " " << name;
                 }
             }
+            if(!first)
+                output << "]";
         }
-        output << "]";
     }
 
     void CodeGenerator::visit(Expression &ast) {
@@ -97,15 +101,14 @@ namespace CocoAST {
             return;
         assert(ast.referenced_rule);
 
-        //TODO: prefix our arguments (from surrounding AttrDecl) with $
+        //TODO: prefix arguments of surrounding AttrDecl with $
 
         // first, add non-output parameters in []
-        output << "[";
         bool first = true;
         size_t i = 0;
         for (auto &attr : attribs.attributes) {
             auto& expr = std::get<0>(attr);
-            auto& is_output_parameter = std::get<1>(attr);
+            auto& is_output_parameter = std::get<bool>(attr);
             if (! is_output_parameter) {
                 if (first) {
                     first = false;
@@ -122,6 +125,7 @@ namespace CocoAST {
 
         // second, assign output parameters, which are fields of the returned context in ANTLR
         first = true;
+        bool second = false; // false iff we output exactly one parameter: then } will be on the same line
         i = 0;
         for (auto &attr : attribs.attributes) {
             auto& expr = std::get<0>(attr);
@@ -131,17 +135,23 @@ namespace CocoAST {
                     first = false;
                     output << "\n" << indent() << "{ ";
                     indent(+1);
+                } else {
+                    second = true;
+                    output << "\n" << indent();
                 }
                 auto attr_decl = ast.referenced_rule->attr_decl->attributes.at(i);
                 auto decl_name = std::get<1>(attr_decl);
-                output << expr
-                       << " = $" << ast.sym.name << "." << decl_name
-                       << ";\n" << indent();
+                output << expr << " = $" << ast.sym.antlr_name << "." << decl_name << ";";
             }
             ++i;
         }
         if(!first) {
-            output << "\n" << indent(-1) << "}";
+            indent(-1);
+            if(second)
+                output << "\n" << indent();
+            else
+                output << " ";
+            output << "}";
         }
 
     }
@@ -183,7 +193,7 @@ namespace CocoAST {
         if (ast.literal) {
             output << "'" << ast.name << "'";
         } else {
-            output << ast.name;
+            output << ast.antlr_name;
         }
     }
 

@@ -21,14 +21,18 @@ set(generated_source_files
 )
 set_source_files_properties(${generated_source_files} PROPERTIES GENERATED TRUE)
 set(SOURCE_FILES
+        CocoAstMain.cpp
+        CocoAstMain.h
         CocoAST.cpp
         CocoAST.h
         CocoAstVisitor.cpp
         CocoAstVisitor.h
-        CodeGenerator.cpp
-        CodeGenerator.h
         AntlrOptimizer.cpp
         AntlrOptimizer.h
+        SymbolResolver.cpp
+        SymbolResolver.h
+        CodeGenerator.cpp
+        CodeGenerator.h
 
         main.cpp
         common.h
