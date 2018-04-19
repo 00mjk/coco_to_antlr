@@ -239,7 +239,7 @@ Coco                            (. token_names.insert(L"EOF", L"EOF"); /* specia
                                    }
                                 .)
 
-  [ "IGNORECASE"                (. output() << "//" C2A_TODO "IGNORECASE not possible in ANTLR\n"; .)
+  [ "IGNORECASE"                (. output() << "//" C2A_TODO "IGNORECASE not possible in ANTLR, see <https://github.com/antlr/antlr4/blob/master/doc/case-insensitive-lexing.md>\n"; .)
   ]
   [ "CHARACTERS"                (. current_output = output_type::charsets;
                                    output() << "// CHARACTERS from line " << std::to_wstring(t->line) << '\n';
@@ -672,6 +672,7 @@ Attribs<CocoAST::Attribs& node>
 //TODO: may be empty <braces>
 	(
 		'<'
+		//FIXME: comma , in (braced) expression fails
 		[
 			(. auto pos_start = la->pos; .)
 			ANY{ANY}

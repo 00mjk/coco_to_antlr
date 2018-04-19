@@ -104,8 +104,6 @@ namespace CocoAST {
             return;
         assert(ast.referenced_rule);
 
-        //TODO: prefix arguments of surrounding AttrDecl with $
-
         // first, add non-output parameters in []
         bool first = true;
         size_t i = 0;
